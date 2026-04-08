@@ -11,10 +11,6 @@ from tf2_ros import Buffer, TransformException, TransformListener
 import tf2_geometry_msgs  # noqa: F401
 
 
-def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
-
-
 def catmull_rom(p0, p1, p2, p3, t):
     t2 = t * t
     t3 = t2 * t
@@ -59,7 +55,6 @@ class PathDrawer(Node):
 
         self.robot_x = 0.0
         self.robot_y = 0.0
-        self.robot_q = None # keep latest orientation if you ever want it
 
         self.get_logger().info(
             "PathDrawer ready.\n"
@@ -71,12 +66,13 @@ class PathDrawer(Node):
         )
 
     def odom_callback(self, msg: Odometry):
+        """Cache the latest robot pose used to anchor a newly drawn path."""
         self.robot_x = float(msg.pose.pose.position.x)
         self.robot_y = float(msg.pose.pose.position.y)
-        self.robot_q = msg.pose.pose.orientation
         self.have_odom = True
 
     def clear_callback(self, request, response):
+        """Clear the stored path so the next click starts a brand-new route."""
         self.raw_xy = []
         self.started = False
         # publish empty paths so RViz clears
@@ -86,6 +82,7 @@ class PathDrawer(Node):
         return response
 
     def click_callback(self, msg: PointStamped):
+        """Transform the clicked point to odom and append it to the full path."""
         if not self.have_odom:
             self.get_logger().warn("Ignoring click: no /odom yet.")
             return
@@ -124,6 +121,7 @@ class PathDrawer(Node):
         )
 
     def build_empty_grid(self) -> OccupancyGrid:
+        """Create an all-free local costmap so the controller always has a grid."""
         grid = OccupancyGrid()
         grid.header.frame_id = "odom"
 
@@ -143,10 +141,12 @@ class PathDrawer(Node):
         return grid
 
     def publish_grid(self):
+        """Republish the empty grid with an updated timestamp."""
         self.grid_msg.header.stamp = self.get_clock().now().to_msg()
         self.grid_pub.publish(self.grid_msg)
 
     def make_path_msg(self, xy_list):
+        """Convert a list of (x, y) tuples into a ROS Path in odom."""
         now = self.get_clock().now().to_msg()
         path = Path()
         path.header.frame_id = self.frame_id
@@ -201,6 +201,7 @@ class PathDrawer(Node):
         return out
 
     def linear_densify(self, xy, per_seg=10):
+        """Insert evenly spaced samples between consecutive waypoints."""
         out = []
         for i in range(len(xy) - 1):
             x0, y0 = xy[i]
@@ -212,6 +213,7 @@ class PathDrawer(Node):
         return out
 
     def prune_close(self, xy, min_dist=0.02):
+        """Remove consecutive samples that are closer than min_dist."""
         if not xy:
             return xy
         out = [xy[0]]
@@ -230,9 +232,6 @@ def main():
     node.destroy_node()
     rclpy.shutdown()
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
