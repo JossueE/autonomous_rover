@@ -33,11 +33,14 @@ struct ControllerConfig {
   double v_max{0.8};
   double a_max{0.5};
 
-  double lambda_1{0.25};
+  double lambda_1{0.25};    // smoothness (successive acceleration change)
+  double lambda_theta{1.0}; // heading tracking weight
+  double lambda_v{0.1};     // wheel-velocity tracking weight
 
   double d_safe{0.8};
   double voxel_size{0.5};
   double max_range{3.5};
+  int max_obstacles{20}; // NLP obstacle slots (extra slots use sentinel)
 };
 
 struct RobotState {
@@ -117,31 +120,22 @@ protected:
   extractObstacleVoxels(const OccupancyGridData &occupancy,
                         const RobotState &x0) const;
 
-  void rebuildConstraintVector(const RobotState &x0,
-                               const std::vector<Point2D> &voxel_obstacles);
-
-  [[nodiscard]] casadi::MX
-  buildCostFunction(std::size_t step,
-                    const TrajectoryReference &reference) const;
-
   [[nodiscard]] casadi::DM
   buildInitialGuess(std::size_t step,
                     const TrajectoryReference &reference) const;
-
-  [[nodiscard]] std::pair<casadi::DM, casadi::DM>
-  buildConstraintBounds(std::size_t obstacle_constraint_count) const;
 
   [[nodiscard]] static double normalizeAngle(double angle);
 
 protected:
   ControllerConfig config_{};
 
-  int n_{7}; // [x, y, theta, vr, vl, ar, al]
+  int n_{7};      // [x, y, theta, vr, vl, ar, al]
+  int p_size_{0}; // total parameter count
   bool initialized_{false};
 
-  casadi::MX X_;
-  casadi::MX g_base_;
-  casadi::MX g_current_;
+  casadi::MX X_;            // decision variable
+  casadi::MX p_;            // parameter vector
+  casadi::Function solver_; // compiled NLP solver (built once)
 
   std::vector<double> lbx_;
   std::vector<double> ubx_;
