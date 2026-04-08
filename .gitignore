@@ -5,5 +5,5 @@ log/
 *.o
 *.so
 .__pycache__/
-
+.codex
 

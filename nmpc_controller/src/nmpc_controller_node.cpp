@@ -5,7 +5,6 @@
 #include <cmath>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 #include <limits>
 
@@ -53,26 +52,32 @@ public:
       : rclcpp::Node("nmpc_controller_node"),
         NMPCController(ControllerConfig{}), tf_buffer_(this->get_clock()),
         tf_listener_(tf_buffer_) {
-    this->declare_parameter<double>("h", 0.2);
-    this->declare_parameter<int>("N", 10);
-    this->declare_parameter<double>("L", 0.160);
-    this->declare_parameter<double>("v_max", 0.22);
-    this->declare_parameter<double>("a_max", 0.35);
-    this->declare_parameter<double>("lambda_1", 2.0);
-    this->declare_parameter<double>("lambda_theta", 0.25);
-    this->declare_parameter<double>("lambda_v", 0.02);
-    this->declare_parameter<double>("d_safe", 0.2);
-    this->declare_parameter<double>("voxel_size", 0.5);
-    this->declare_parameter<double>("max_range", 3.5);
-    this->declare_parameter<int>("max_obstacles", 20);
+    // NMPC discretization and differential-drive model parameters.
+    this->declare_parameter<double>("h", 0.2);      // Sampling time [s].
+    this->declare_parameter<int>("N", 10);          // Prediction horizon length.
+    this->declare_parameter<double>("L", 0.160);    // Track width [m].
+    this->declare_parameter<double>("v_max", 0.22); // Max wheel speed [m/s].
+    this->declare_parameter<double>("a_max", 0.35); // Max wheel acceleration [m/s^2].
 
-    this->declare_parameter<std::string>("map_frame", "map");
-    this->declare_parameter<std::string>("base_frame", "base_link");
-    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel");
+    // NMPC cost weights.
+    this->declare_parameter<double>("lambda_1", 2.0);      // Smoothness weight for acceleration changes.
+    this->declare_parameter<double>("lambda_theta", 0.25); // Heading tracking weight.
+    this->declare_parameter<double>("lambda_v", 0.02);     // Wheel-speed tracking weight.
+
+    // Obstacle handling parameters.
+    this->declare_parameter<double>("d_safe", 0.2);      // Minimum obstacle clearance [m].
+    this->declare_parameter<double>("voxel_size", 0.5);  // Obstacle voxel size [m].
+    this->declare_parameter<double>("max_range", 3.5);   // Obstacle search range [m].
+    this->declare_parameter<int>("max_obstacles", 20);   // Fixed obstacle slots in the NLP.
+
+    // ROS frame and topic configuration.
+    this->declare_parameter<std::string>("map_frame", "map");         // Global planning / control frame.
+    this->declare_parameter<std::string>("base_frame", "base_link");  // Robot body frame.
+    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel"); // Velocity command output topic.
     this->declare_parameter<std::string>("costmap_topic",
-                                         "/move_base/local_costmap/costmap");
-    this->declare_parameter<std::string>("path_topic", "/drawn_plan");
-    this->declare_parameter<double>("goal_tolerance", 0.05);
+                                         "/move_base/local_costmap/costmap"); // Occupancy grid input topic.
+    this->declare_parameter<std::string>("path_topic", "/drawn_plan");        // Path reference input topic.
+    this->declare_parameter<double>("goal_tolerance", 0.05);                  // Goal acceptance radius [m].
 
     config_.h = this->get_parameter("h").as_double();
     config_.N = this->get_parameter("N").as_int();
@@ -129,6 +134,8 @@ public:
 
 private:
 
+  // Convert the discrete reference into cumulative arc length so the controller
+  // can track progress along the path independently of the point density.
   std::vector<double>
   buildCumulativeDistances(const TrajectoryReference &ref) const {
     std::vector<double> distances(ref.size(), 0.0);
@@ -142,6 +149,8 @@ private:
     return distances;
   }
 
+  // Map a continuous progress value s [m] back to the first reference sample
+  // whose cumulative distance is greater than or equal to s.
   std::size_t stepFromProgress(
       const std::vector<double> &distances,
       const double progress) const {
@@ -158,6 +167,8 @@ private:
     return static_cast<std::size_t>(std::distance(distances.begin(), it));
   }
 
+  // Project the robot position onto nearby path segments and estimate how far
+  // along the current reference the robot has already progressed.
   double estimateProgressAlongReference(
       const RobotState &x0, const TrajectoryReference &ref,
       const std::vector<double> &distances,
@@ -224,7 +235,6 @@ private:
     occupancy_.width = msg->info.width;
     occupancy_.height = msg->info.height;
     occupancy_.data = msg->data;
-    has_occupancy_ = true;
   }
 
   void pathCallback(const nav_msgs::msg::Path::SharedPtr msg) {
@@ -249,6 +259,8 @@ private:
       if (reference_s_.size() != reference_.size()) {
         reference_s_ = buildCumulativeDistances(reference_);
       }
+      // Keep the already-traveled arc length when the same path is republished
+      // with additional samples or extra clicked waypoints.
       carry_progress = estimateProgressAlongReference(
           current_state, reference_, reference_s_, step_);
     }
@@ -344,6 +356,8 @@ private:
       angular_v[i] = wrapToPi(ref.theta[i + 1] - ref.theta[i]) / config_.h;
     }
 
+    // The last sample is treated as a terminal point where the robot should
+    // settle, so the desired speed and turn rate are set to zero.
     linear_v[n - 1] = 0.0;
     angular_v[n - 1] = 0.0;
 
@@ -391,6 +405,8 @@ private:
     return true;
   }
 
+  // Publish a zero command and reset the internal wheel-speed estimate used as
+  // the next state initialization.
   void publishStop() {
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = 0.0;
@@ -424,6 +440,8 @@ private:
       reference_s_ = buildCumulativeDistances(reference_);
     }
 
+    // Progress is kept monotonic so the controller does not jump backwards when
+    // the path contains dense or nearly overlapping samples.
     const double estimated_progress = estimateProgressAlongReference(
         x0, reference_, reference_s_, step_);
     progress_s_ = std::max(progress_s_, estimated_progress);
@@ -504,7 +522,6 @@ private:
 
   bool active_{false};
   bool has_reference_{false};
-  bool has_occupancy_{false};
 };
 
 int main(int argc, char **argv) {
