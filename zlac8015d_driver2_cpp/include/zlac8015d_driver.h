@@ -416,8 +416,8 @@ public:
 
 private:
 	std::string port_;
-	OperationMode mode_;
     int baudrate_;
+	OperationMode mode_;
     modbus_t* client_ = nullptr;
 
 	/**
