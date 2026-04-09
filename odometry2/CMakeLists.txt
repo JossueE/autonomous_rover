@@ -18,6 +18,7 @@ find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 set(dependencies "rclcpp" "std_msgs" "nav_msgs" "tf2" "tf2_ros" "std_srvs")
 
@@ -39,8 +40,13 @@ add_executable(odometry2 src/odometry2.cpp ${LIBS_FILES})
 ament_target_dependencies(odometry2 ${dependencies})
 target_link_libraries(odometry2 encoder) # link with the encoder library
 
+add_executable(imu src/imu.cpp)
+ament_target_dependencies(imu rclcpp sensor_msgs)
+
+
 install(TARGETS 
   odometry2
+  imu
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY src include
