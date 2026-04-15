@@ -1,0 +1,44 @@
+bluesea_node:
+  ros__parameters:
+  #ROS2#
+    frame_id: "odom"
+    topic: "scan_raw"
+  #DATA#
+    dev_id: -1
+    raw_bytes: 3
+    output_360: true
+    output_scan: true
+    output_cloud: false
+    with_angle_filter: false
+    min_angle: -3.1415926
+    max_angle: 3.1415926
+    # mask1: "0,3.14"
+    # mask2: "-3,-2"
+    hard_resample: false
+    soft_resample: false
+    with_checksum: true
+    reversed: false #false
+    #inverted: true
+    min_dist: 0.1
+    max_dist: 30.0
+    error_circle: 3
+    error_scale: 0.9
+#CONNECT#
+    type: "uart"
+    port: "/dev/ttyUSB1" # "/dev/ttyUSB0", /dev/LIDAR
+    baud_rate: -1 #rate_list[ 384000, 500000, 768000, 921600 ]
+    #FITTER#
+    filter_open: false  
+    max_range: 30.0
+    min_range: 0.1
+    max_range_difference: 0.1 
+    filter_window: 1 
+  #GET#
+    uuid:  -1
+  #SET#
+    resample_res: -1.0
+    with_confidence: -1
+    with_smooth: -1
+    with_deshadow: -1
+    alarm_msg: -1
+    rpm: -1
