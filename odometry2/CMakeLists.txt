@@ -1,55 +1,68 @@
 cmake_minimum_required(VERSION 3.5)
 project(odometry2)
 
-# Default to C++14
+# Default to C++17 (recomendado para ROS 2 Humble/Iron/Jazzy por tf2)
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# find dependencies
+# 1. Encontrar paquetes
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(sensor_msgs REQUIRED)
 
-set(dependencies "rclcpp" "std_msgs" "nav_msgs" "tf2" "tf2_ros" "std_srvs")
+# 2. Definir dependencias comunes para evitar repetición
+set(dependencies 
+  "rclcpp" 
+  "std_msgs" 
+  "sensor_msgs" 
+  "nav_msgs" 
+  "geometry_msgs" 
+  "tf2" 
+  "tf2_ros" 
+  "std_srvs"
+)
 
-# Define include directories
-set(INCLUDE_DIRS include)
-
-## IMPORTANT include dirs
-include_directories(${ament_cmake_INCLUDE_DIRS} ${INCLUDE_DIRS})
-
-
-## Declare a C++ library
-set(LIBS_FILES src/encoder.cpp)
-
-add_library(${PROJECT_NAME}_LIBRARIES ${LIBS_FILES} ${INCLUDE_DIRS})
+# 3. Configurar biblioteca de encoders
 add_library(encoder STATIC src/encoder.cpp)
-target_include_directories(encoder PUBLIC include)
+target_include_directories(encoder PUBLIC 
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(encoder ${dependencies})
 
-add_executable(odometry2 src/odometry2.cpp ${LIBS_FILES})
+# 4. Nodo original (odometry2)
+add_executable(odometry2 src/odometry2.cpp)
+target_link_libraries(odometry2 encoder)
 ament_target_dependencies(odometry2 ${dependencies})
-target_link_libraries(odometry2 encoder) # link with the encoder library
 
+# 5. Nodo IMU (Witmotion)
 add_executable(imu src/imu.cpp)
-ament_target_dependencies(imu rclcpp sensor_msgs)
+ament_target_dependencies(imu ${dependencies})
 
+# 6. Nodo de Fusión (El que fallaba)
+add_executable(odometry_fusion_node src/odometry_fusion_node.cpp)
+ament_target_dependencies(odometry_fusion_node ${dependencies})
 
+# 7. Instalación
 install(TARGETS 
+  encoder
   odometry2
   imu
+  odometry_fusion_node
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY src include
-  DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY include/
+  DESTINATION include/${PROJECT_NAME})
 
 ament_package()
