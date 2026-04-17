@@ -67,6 +67,14 @@ def generate_launch_description():
             'frame_id': 'imu_link'
         }]
     )
+    
+    static_tf_imu_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_imu_publisher',
+        output='screen',
+        arguments=['0.0', '0.0', '0.2', '0.0', '0.0', '0.0', 'base_footprint', 'imu_link']
+    )
 
     # Node: EKF Fusion (Robot Localization)
     ekf_node = Node(
@@ -84,5 +92,6 @@ def generate_launch_description():
         wheels_driver_node,
         odometry_node,
         imu_node,
+        static_tf_imu_node,
         ekf_node
     ])
