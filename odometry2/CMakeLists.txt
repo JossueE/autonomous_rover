@@ -50,16 +50,11 @@ ament_target_dependencies(odometry2 ${dependencies})
 add_executable(imu src/imu.cpp)
 ament_target_dependencies(imu ${dependencies})
 
-# 6. Nodo de Fusión (El que fallaba)
-add_executable(odometry_fusion_node src/odometry_fusion_node.cpp)
-ament_target_dependencies(odometry_fusion_node ${dependencies})
-
-# 7. Instalación
+# 6. Instalación
 install(TARGETS 
   encoder
   odometry2
   imu
-  odometry_fusion_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
