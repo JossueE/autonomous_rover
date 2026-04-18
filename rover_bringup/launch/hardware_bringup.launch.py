@@ -1,18 +1,32 @@
 import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch.actions import LogInfo
 
 def generate_launch_description():
-    """
-    Generates a ROS 2 launch description to initialize all hardware components 
-    of the differential drive rover.
-    """
-    
-    # Configuration constants for USB ports
-    # Consider using udev rules in the future for static symlinks (e.g., /dev/rover_motors)
-    MOTORS_PORT = '/dev/ttyUSB0'
-    IMU_PORT = '/dev/ttyUSB1'
+    # 1. Declaración de argumentos de lanzamiento (visibles desde la terminal)
+    motors_port_arg = DeclareLaunchArgument(
+        'motors_port',
+        default_value='/dev/ttyUSB0',
+        description='Puerto serial para el driver de motores ZLAC8015D'
+    )
+
+    imu_port_arg = DeclareLaunchArgument(
+        'imu_port',
+        default_value='/dev/ttyUSB1',
+        description='Puerto serial para el sensor IMU WitMotion'
+    )
+
+    # 2. Captura de los valores de los argumentos
+    motors_port = LaunchConfiguration('motors_port')
+    imu_port = LaunchConfiguration('imu_port')
+
+    # Ruta al archivo de configuración EKF (asegúrate de que este archivo exista)
+    # Recomiendo ponerlo en rover_bringup/config/ekf.yaml
+    pkg_bringup = get_package_share_directory('rover_bringup')
+    ekf_config_path = os.path.join(pkg_bringup, 'config', 'ekf.yaml')
 
     # Node: ZLAC8015D Motor Driver
     wheels_driver_node = Node(
@@ -20,11 +34,10 @@ def generate_launch_description():
         executable='wheels_driver',
         name='wheels_driver',
         output='screen',
-        arguments=[MOTORS_PORT],
+        arguments=[motors_port], # Pasa el puerto como argumento de línea de comandos
         parameters=[{
             'unlock_driver': True,
-            'time_disabled_driver_s': 3.0,
-            'accel_time_ms': 500,  # Soft start for real hardware
+            'accel_time_ms': 500,
             'decel_time_ms': 500
         }]
     )
@@ -36,7 +49,7 @@ def generate_launch_description():
         name='odometry2_node',
         output='screen',
         parameters=[{
-            'publish_tf': True,
+            'publish_tf': False, # IMPORTANTE: False para dejar que el EKF maneje el TF
             'wheels_separation': 0.4,
             'wheel_radius': 0.1
         }]
@@ -48,16 +61,37 @@ def generate_launch_description():
         executable='imu',
         name='imu_node',
         output='screen',
-        arguments=[IMU_PORT],
+        arguments=[imu_port], # Pasa el puerto como argumento de línea de comandos
         parameters=[{
-            'baudrate': 9600,
+            'baudrate': 115200,
             'frame_id': 'imu_link'
         }]
     )
+    
+    static_tf_imu_node = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_imu_publisher',
+        output='screen',
+        arguments=['0.0', '0.0', '0.2', '0.0', '0.0', '0.0', 'base_footprint', 'imu_link']
+    )
+
+    # Node: EKF Fusion (Robot Localization)
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_config_path]
+    )
 
     return LaunchDescription([
-        LogInfo(msg='Starting Rover Hardware Bringup...'),
+        LogInfo(msg='Iniciando Hardware del Rover con Fusión EKF...'),
+        motors_port_arg,
+        imu_port_arg,
         wheels_driver_node,
         odometry_node,
-        imu_node
+        imu_node,
+        static_tf_imu_node,
+        ekf_node
     ])
