@@ -1,7 +1,8 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -26,7 +27,14 @@ def generate_launch_description():
     # Ruta al archivo de configuración EKF (asegúrate de que este archivo exista)
     # Recomiendo ponerlo en rover_bringup/config/ekf.yaml
     pkg_bringup = get_package_share_directory('rover_bringup')
+    pkg_robot_core = get_package_share_directory('robot_core')
     ekf_config_path = os.path.join(pkg_bringup, 'config', 'ekf.yaml')
+
+    robot_state_publisher_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_robot_core, 'launch', 'robot_state_publisher.launch.py')
+        )
+    )
 
     # Node: ZLAC8015D Motor Driver
     wheels_driver_node = Node(
@@ -68,14 +76,6 @@ def generate_launch_description():
         }]
     )
     
-    static_tf_imu_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_imu_publisher',
-        output='screen',
-        arguments=['0.0', '0.0', '0.2', '0.0', '0.0', '0.0', 'base_footprint', 'imu_link']
-    )
-
     # Node: EKF Fusion (Robot Localization)
     ekf_node = Node(
         package='robot_localization',
@@ -89,9 +89,9 @@ def generate_launch_description():
         LogInfo(msg='Iniciando Hardware del Rover con Fusión EKF...'),
         motors_port_arg,
         imu_port_arg,
+        robot_state_publisher_launch,
         wheels_driver_node,
         odometry_node,
         imu_node,
-        static_tf_imu_node,
         ekf_node
     ])
