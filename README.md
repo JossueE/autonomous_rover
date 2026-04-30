@@ -25,4 +25,14 @@ ros2 launch rtabmap_launch rtabmap.launch.py   rtabmap_args:="--delete_db_on_sta
   --Grid/MaxObstacleHeight 1.20 \
   --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=true   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_link   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=0.3   queue_size:=20   qos:=2   rviz:=true
 
+
 ros2 run robot_core teleop_keyboard.py --ros-args -r cmd_vel:=/cmd_vel_safe
+
+mkdir -p ~/maps/rtabmap_pcd
+cd ~/maps/rtabmap_pcd
+
+ros2 run pcl_ros pointcloud_to_pcd \
+  --ros-args \
+  -r input:=/rtabmap/cloud_map
+
+ros2 service call /rtabmap/publish_map std_srvs/srv/Empty

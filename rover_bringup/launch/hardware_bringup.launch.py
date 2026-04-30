@@ -86,17 +86,32 @@ def generate_launch_description():
         }]
     )
 
-    # Node: WitMotion IMU
-    imu_node = Node(
+    # Node: WitMotion IMU (raw)
+    raw_imu_node = Node(
         package='odometry2',
         executable='imu',
-        name='imu_node',
+        name='imu_raw_node',
         output='screen',
         condition=IfCondition(use_imu_odometry),
-        arguments=[imu_port], # Pasa el puerto como argumento de línea de comandos
+        arguments=[imu_port],
+        remappings=[('imu/data', 'imu/data_raw')],
         parameters=[{
             'baudrate': 115200,
             'frame_id': 'imu_link'
+        }]
+    )
+
+    # Node: IMU filter for WitMotion IMU
+    imu_node = Node(
+        package='imu_filter_madgwick',
+        executable='imu_filter_madgwick_node',
+        name='imu_filter_madgwick_node',
+        output='screen',
+        condition=IfCondition(use_imu_odometry),
+        parameters=[{
+            'use_mag': False,
+            'world_frame': 'enu',
+            'publish_tf': False
         }]
     )
     
@@ -120,6 +135,7 @@ def generate_launch_description():
         wheels_driver_node,
         odometry_node,
         odometry_wheels_only_node,
+        raw_imu_node,
         imu_node,
         ekf_node
     ])
