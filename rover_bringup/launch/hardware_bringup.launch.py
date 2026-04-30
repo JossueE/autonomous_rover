@@ -2,6 +2,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -20,9 +21,16 @@ def generate_launch_description():
         description='Puerto serial para el sensor IMU WitMotion'
     )
 
+    use_imu_odometry_arg = DeclareLaunchArgument(
+        'use_imu_odometry',
+        default_value='true',
+        description='true: odometria mixta (ruedas + IMU + EKF), false: solo ruedas'
+    )
+
     # 2. Captura de los valores de los argumentos
     motors_port = LaunchConfiguration('motors_port')
     imu_port = LaunchConfiguration('imu_port')
+    use_imu_odometry = LaunchConfiguration('use_imu_odometry')
 
     # Ruta al archivo de configuración EKF (asegúrate de que este archivo exista)
     # Recomiendo ponerlo en rover_bringup/config/ekf.yaml
@@ -56,8 +64,23 @@ def generate_launch_description():
         executable='odometry2',
         name='odometry2_node',
         output='screen',
+        condition=IfCondition(use_imu_odometry),
         parameters=[{
             'publish_tf': False, # IMPORTANTE: False para dejar que el EKF maneje el TF
+            'wheels_separation': 0.4,
+            'wheel_radius': 0.1
+        }]
+    )
+
+    odometry_wheels_only_node = Node(
+        package='odometry2',
+        executable='odometry2',
+        name='odometry2_node',
+        output='screen',
+        condition=UnlessCondition(use_imu_odometry),
+        remappings=[('wheel/odom', 'odom')],
+        parameters=[{
+            'publish_tf': True,
             'wheels_separation': 0.4,
             'wheel_radius': 0.1
         }]
@@ -69,6 +92,7 @@ def generate_launch_description():
         executable='imu',
         name='imu_node',
         output='screen',
+        condition=IfCondition(use_imu_odometry),
         arguments=[imu_port], # Pasa el puerto como argumento de línea de comandos
         parameters=[{
             'baudrate': 115200,
@@ -82,6 +106,8 @@ def generate_launch_description():
         executable='ekf_node',
         name='ekf_filter_node',
         output='screen',
+        condition=IfCondition(use_imu_odometry),
+        remappings=[('odometry/filtered', 'odom')],
         parameters=[ekf_config_path]
     )
 
@@ -89,9 +115,11 @@ def generate_launch_description():
         LogInfo(msg='Iniciando Hardware del Rover con Fusión EKF...'),
         motors_port_arg,
         imu_port_arg,
+        use_imu_odometry_arg,
         robot_state_publisher_launch,
         wheels_driver_node,
         odometry_node,
+        odometry_wheels_only_node,
         imu_node,
         ekf_node
     ])
