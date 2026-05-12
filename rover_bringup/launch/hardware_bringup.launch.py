@@ -54,7 +54,8 @@ def generate_launch_description():
         parameters=[{
             'unlock_driver': True,
             'accel_time_ms': 500,
-            'decel_time_ms': 500
+            'decel_time_ms': 500,
+            'wheels_separation': 0.35
         }]
     )
 
@@ -67,7 +68,7 @@ def generate_launch_description():
         condition=IfCondition(use_imu_odometry),
         parameters=[{
             'publish_tf': False, # IMPORTANTE: False para dejar que el EKF maneje el TF
-            'wheels_separation': 0.4,
+            'wheels_separation': 0.35,
             'wheel_radius': 0.1
         }]
     )
@@ -81,7 +82,7 @@ def generate_launch_description():
         remappings=[('wheel/odom', 'odom')],
         parameters=[{
             'publish_tf': True,
-            'wheels_separation': 0.4,
+            'wheels_separation': 0.35,
             'wheel_radius': 0.1
         }]
     )
