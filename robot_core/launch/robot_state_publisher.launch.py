@@ -28,11 +28,11 @@ def generate_launch_description():
             ' base_color:="',
             base_color,
             '"',
-            ' x_offset:=',
+            ' kinect_offset_x:=',
             camera_x,
-            ' z_offset:=',
+            ' kinect_offset_z:=',
             camera_z,
-            ' pitch_angle:=',
+            ' kinect_offset_pitch:=',
             camera_pitch,
         ])
     }
@@ -40,9 +40,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('lidar_model', default_value='pacecat'),
         DeclareLaunchArgument('base_color', default_value='0.45 0.48 0.50 1.0'),
-        DeclareLaunchArgument('camera_x', default_value='0.15'),
-        DeclareLaunchArgument('camera_z', default_value='0.43'),
-        DeclareLaunchArgument('camera_pitch', default_value='-0.6'),
+        DeclareLaunchArgument('camera_x', default_value='0.115'),
+        DeclareLaunchArgument('camera_z', default_value='0.50'),
+        DeclareLaunchArgument('camera_pitch', default_value='-0.1'),
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',

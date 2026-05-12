@@ -48,7 +48,7 @@
   <!-- Argumentos y Propiedades -->
   <xacro:arg name="base_color" default="0.45 0.48 0.50 1.0"/>
   <xacro:property name="wheelSeparation" value="0.35"/>
-  <xacro:property name="wheelRadius" value="0.06"/>
+  <xacro:property name="wheelRadius" value="0.1"/>
   <xacro:property name="baseLength" value="0.55"/>
   <xacro:property name="baseWidth" value="${wheelSeparation-0.06}"/>
   <xacro:property name="baseHeight" value="${wheelRadius-0.02}"/>
