@@ -8,7 +8,7 @@ sudo apt update
 sudo apt install ros-jazzy-rtabmap-ros ros-jazzy-imu-filter-madgwick ros-jazzy-pcl-ros
 
 
-ros2 run azure_kinect_ros2_driver azure_kinect_node --ros-args -p point_cloud:=true -p rgb_point_cloud:=true
+ros2 run azure_kinect_ros2_driver azure_kinect_node --ros-args -p point_cloud:=true -p rgb_point_cloud:=false -p fps:=30
 
 
 ros2 run imu_filter_madgwick imu_filter_madgwick_node   --ros-args   -p use_mag:=false   -p world_frame:=enu   -p publish_tf:=false   -r imu/data_raw:=/k4a/imu   -r imu/data:=/k4a/imu_filtered
