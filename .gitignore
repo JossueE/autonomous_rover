@@ -4,6 +4,6 @@ install/
 log/
 *.o
 *.so
-.__pycache__/
+*__pycache__/
 .codex
 
