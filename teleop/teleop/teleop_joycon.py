@@ -6,8 +6,6 @@ Reads from /joy topic and publishes to cmd_vel_safe.
 Includes a deadman switch on the RT trigger.
 """
 
-__author__ = "Jules"
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
