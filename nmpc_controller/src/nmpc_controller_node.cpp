@@ -56,7 +56,7 @@ public:
     // NMPC discretization and differential-drive model parameters.
     this->declare_parameter<double>("h", 0.2);      // Sampling time [s].
     this->declare_parameter<int>("N", 10);          // Prediction horizon length.
-    this->declare_parameter<double>("L", 0.160);    // Track width [m].
+    this->declare_parameter<double>("L", 0.35);     // Track width [m].
     this->declare_parameter<double>("v_max", 0.22); // Max wheel speed [m/s].
     this->declare_parameter<double>("a_max", 0.35); // Max wheel acceleration [m/s^2].
 
@@ -74,7 +74,7 @@ public:
     // ROS frame and topic configuration.
     this->declare_parameter<std::string>("map_frame", "map");         // Global planning / control frame.
     this->declare_parameter<std::string>("base_frame", "base_footprint");  // Robot body frame.
-    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel"); // Velocity command output topic.
+    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel_safe"); // Velocity command output topic.
     this->declare_parameter<std::string>("costmap_topic",
                                          "/move_base/local_costmap/costmap"); // Occupancy grid input topic.
     this->declare_parameter<std::string>("path_topic", "/drawn_plan");        // Path reference input topic.
