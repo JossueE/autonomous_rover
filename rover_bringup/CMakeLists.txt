@@ -32,6 +32,7 @@ install(DIRECTORY
 # Install config files
 install(DIRECTORY
   config
+  maps
   DESTINATION share/${PROJECT_NAME}
 )
 
