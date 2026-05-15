@@ -1,0 +1,20 @@
+nmpc_controller_node:
+  ros__parameters:
+    h: 0.2
+    N: 10
+    L: 0.13
+    v_max: 0.4
+    a_max: 0.5
+    lambda_1: 2.5
+    lambda_theta: 0.9
+    lambda_v: 0.05
+    d_safe: 0.1
+    voxel_size: 0.5
+    max_range: 3.5
+    max_obstacles: 20
+    map_frame: "map"
+    base_frame: "base_footprint"
+    cmd_vel_topic: "/cmd_vel"
+    costmap_topic: "/global_planner_occupancy_grid"
+    path_topic: "/sdv_trajectory"
+    goal_tolerance: 0.1
