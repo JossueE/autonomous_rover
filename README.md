@@ -39,7 +39,8 @@ ros2 launch rover_bringup hardware_bringup.launch.py use_wheel_odometry:=false
 
 
 3) Launch RTAB-Map
-=======
+
+```bash
 ros2 launch rtabmap_launch rtabmap.launch.py   rtabmap_args:="--delete_db_on_start \
   --Reg/Force3DoF true \
   --Grid/FromDepth false \
@@ -48,6 +49,7 @@ ros2 launch rtabmap_launch rtabmap.launch.py   rtabmap_args:="--delete_db_on_sta
   --Grid/MaxGroundHeight 0.10 \
   --Grid/MaxObstacleHeight 1.20 \
   --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=true   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_footprint   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=0.3   queue_size:=20   qos:=2   rviz:=true
+```
 
 - Example launch with commonly tuned arguments. These tune grid generation, 3-DoF registration, synchronization, and topics used by this repository:
 
