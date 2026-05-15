@@ -144,3 +144,6 @@ ros2 service call /rtabmap/publish_map std_srvs/srv/Empty
 
 source install/setup.bash
 rviz2 -d install/autonomous_robot_simulation/share/autonomous_robot_simulation/rviz/new.rviz
+
+
+ros2 launch path_planning_dynamic planning.launch.py use_sim_time:=true
