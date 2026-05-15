@@ -2,9 +2,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 def generate_launch_description():
@@ -27,10 +27,19 @@ def generate_launch_description():
         description='true: odometria mixta (ruedas + IMU + EKF), false: solo ruedas'
     )
 
+    use_wheel_odometry_arg = DeclareLaunchArgument(
+        'use_wheel_odometry',
+        default_value='true',
+        description='true: habilita odometria por ruedas, false: deja odom->base_footprint a otra fuente'
+    )
+
     # 2. Captura de los valores de los argumentos
     motors_port = LaunchConfiguration('motors_port')
     imu_port = LaunchConfiguration('imu_port')
     use_imu_odometry = LaunchConfiguration('use_imu_odometry')
+    use_wheel_odometry = LaunchConfiguration('use_wheel_odometry')
+    use_imu_wheel_odometry = PythonExpression(["'", use_wheel_odometry, "' == 'true' and '", use_imu_odometry, "' == 'true'"])
+    use_wheels_only_odometry = PythonExpression(["'", use_wheel_odometry, "' == 'true' and '", use_imu_odometry, "' != 'true'"])
 
     # Ruta al archivo de configuración EKF (asegúrate de que este archivo exista)
     # Recomiendo ponerlo en rover_bringup/config/ekf.yaml
@@ -65,7 +74,7 @@ def generate_launch_description():
         executable='odometry2',
         name='odometry2_node',
         output='screen',
-        condition=IfCondition(use_imu_odometry),
+        condition=IfCondition(use_imu_wheel_odometry),
         parameters=[{
             'publish_tf': False, # IMPORTANTE: False para dejar que el EKF maneje el TF
             'wheels_separation': 0.35,
@@ -78,7 +87,7 @@ def generate_launch_description():
         executable='odometry2',
         name='odometry2_node',
         output='screen',
-        condition=UnlessCondition(use_imu_odometry),
+        condition=IfCondition(use_wheels_only_odometry),
         remappings=[('wheel/odom', 'odom')],
         parameters=[{
             'publish_tf': True,
@@ -93,7 +102,7 @@ def generate_launch_description():
         executable='imu',
         name='imu_raw_node',
         output='screen',
-        condition=IfCondition(use_imu_odometry),
+        condition=IfCondition(use_imu_wheel_odometry),
         arguments=[imu_port],
         remappings=[('imu/data', 'imu/data_raw')],
         parameters=[{
@@ -108,7 +117,7 @@ def generate_launch_description():
         executable='imu_filter_madgwick_node',
         name='imu_filter_madgwick_node',
         output='screen',
-        condition=IfCondition(use_imu_odometry),
+        condition=IfCondition(use_imu_wheel_odometry),
         parameters=[{
             'use_mag': False,
             'world_frame': 'enu',
@@ -122,7 +131,7 @@ def generate_launch_description():
         executable='ekf_node',
         name='ekf_filter_node',
         output='screen',
-        condition=IfCondition(use_imu_odometry),
+        condition=IfCondition(use_imu_wheel_odometry),
         remappings=[('odometry/filtered', 'odom')],
         parameters=[ekf_config_path]
     )
@@ -132,6 +141,7 @@ def generate_launch_description():
         motors_port_arg,
         imu_port_arg,
         use_imu_odometry_arg,
+        use_wheel_odometry_arg,
         robot_state_publisher_launch,
         wheels_driver_node,
         odometry_node,
