@@ -46,9 +46,10 @@ def resolve_map_path(raw_path: str, default_pkg_path: str) -> str:
 
 def generate_launch_description():
 
+    use_sim_time = LaunchConfiguration('use_sim_time')
+
     package_path = get_package_share_directory('path_planning_dynamic')
     paramsConfig = os.path.join(package_path, 'config', 'params.yaml')
-    use_sim_time = LaunchConfiguration('use_sim_time')
     planner_params = load_ros_parameters(paramsConfig, 'path_planning_node')
     map_path = resolve_map_path(
         planner_params.get(
@@ -88,8 +89,8 @@ def generate_launch_description():
 
     simu_time = launch.actions.DeclareLaunchArgument(
         'use_sim_time',
-        default_value='True',
-        description='Use simulation (Gazebo) clock if true')
+        default_value='true',
+        description='If true, nodes use /clock (required for ros2 bag play --clock).')
     
     return launch.LaunchDescription([
         simu_time,

@@ -1,24 +1,18 @@
-#include "pointcloud_roi.hpp"
-
-#include <pcl/common/centroid.h>
-#include <pcl/common/transforms.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl_conversions/pcl_conversions.h>
-
-#include <algorithm>
-#include <cmath>
-#include <memory>
+#include "pointcloud_roi_node.h"
 
 pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node")
 {
 
     // ==================  variables for ground remove  ==================
+    this->declare_parameter("num_seg_", 50);
+    this->declare_parameter("num_iter_", 25);
     this->declare_parameter("num_lpr_", 10);
     this->declare_parameter("th_seeds_", 1.0);
     this->declare_parameter("th_dist_", 0.3);
     this->declare_parameter("sensor_height_", 1.73);
 
+    this->get_parameter("num_seg_", num_seg_);
+    this->get_parameter("num_iter_", num_iter_);
     this->get_parameter("num_lpr_", num_lpr_);
     this->get_parameter("th_seeds_", th_seeds_);
     this->get_parameter("th_dist_", th_dist_);
@@ -128,6 +122,8 @@ pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->roi_min_y: %f \033[0m", roi_min_y_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->roi_min_z: %f \033[0m", roi_min_z_);
 
+    RCLCPP_INFO(this->get_logger(), "\033[1;34m----> num_seg: %d \033[0m", num_seg_);
+    RCLCPP_INFO(this->get_logger(), "\033[1;34m----> num_iter: %d \033[0m", num_iter_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m----> num_lpr: %d \033[0m", num_lpr_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m----> th_seeds: %f \033[0m", th_seeds_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m----> th_dist: %f \033[0m", th_dist_);
@@ -145,6 +141,10 @@ pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node
     RCLCPP_INFO(this->get_logger(), "\033[1;32m----> pointcloud_roi_node initialized.\033[0m");
 }
 
+pointcloud_roi_node::~pointcloud_roi_node()
+{
+}
+
 void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
     // return if not msg
@@ -154,10 +154,12 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
         return;
     }
 
-    auto input_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    // auto init_time = std::chrono::system_clock::now();
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>());
     pcl::fromROSMsg(*msg, *input_cloud);
 
-    auto transformed_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud(new pcl::PointCloud<pcl::PointXYZ>());
     pcl::transformPointCloud(*input_cloud, *transformed_cloud, rotation_matrix_);
 
     // Remove robot's own footprint points from the pointcloud
@@ -170,42 +172,39 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     pub_->publish(ground_msg);
 
     // Apply ROI filtering
-    pcl::CropBox<pcl::PointXYZI> roi_filter;
+    pcl::CropBox<pcl::PointXYZ> roi_filter;
     roi_filter.setInputCloud(transformed_cloud);
     roi_filter.setMax(ROI_MAX_POINT);
     roi_filter.setMin(ROI_MIN_POINT);
 
-    auto cloud_roi = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_roi(new pcl::PointCloud<pcl::PointXYZ>());
     roi_filter.filter(*cloud_roi);
 
     if (voxel_condition)
     {
         // create voxel grid object
-        pcl::VoxelGrid<pcl::PointXYZI> vg;
+        pcl::VoxelGrid<pcl::PointXYZ> vg;
         vg.setInputCloud(cloud_roi);
         vg.setLeafSize(voxel_leaf_size_x_, voxel_leaf_size_y_, voxel_leaf_size_z_);
-        auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+        pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>());
         vg.filter(*filtered_cloud);
 
         // Separate ground and non-ground points
-        auto notground_points = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
-        notground_points->points.reserve(filtered_cloud->points.size());
+        // pcl::PointCloud<pcl::PointXYZ>::Ptr ground_points(new pcl::PointCloud<pcl::PointXYZ>());
+        pcl::PointCloud<pcl::PointXYZ>::Ptr notground_points(new pcl::PointCloud<pcl::PointXYZ>());
 
-        auto seed_points = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+        pcl::PointCloud<pcl::PointXYZ>::Ptr seed_points(new pcl::PointCloud<pcl::PointXYZ>());
         seed_points->clear();
         extractInitialSeeds(filtered_cloud, seed_points);
 
-        if (!seed_points->empty())
-        {
-            Model model = estimatePlane(*seed_points);
+        Model model = estimatePlane(*seed_points);
 
-            for (auto &point : filtered_cloud->points)
+        for (auto &point : filtered_cloud->points)
+        {
+            float dist = model.normal(0) * point.x + model.normal(1) * point.y + model.normal(2) * point.z + model.d;
+            if (dist >= th_dist_)
             {
-                float dist = model.normal(0) * point.x + model.normal(1) * point.y + model.normal(2) * point.z + model.d;
-                if (dist >= th_dist_)
-                {
-                    notground_points->points.push_back(point);
-                }
+                notground_points->points.push_back(point);
             }
         }
 
@@ -230,9 +229,13 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     robot_marker.header.frame_id = msg->header.frame_id; // Use the same frame as the pointcloud
     robot_marker.header.stamp = msg->header.stamp;
     pub_marker_->publish(robot_marker);
+
+    //auto end_time = std::chrono::system_clock::now();
+    //auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - init_time).count();
+    //std::cout << blue << "Execution time for path creation: " << duration << " ms" << reset << std::endl;
 }
 
-pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCloud<pcl::PointXYZI> &seed_points)
+pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCloud<pcl::PointXYZ> &seed_points)
 {
     Eigen::Matrix3f cov_matrix;
     Eigen::Vector4f centroid;
@@ -246,24 +249,19 @@ pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCl
     return model;
 }
 
-void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZI>::Ptr &seed_points)
+void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZ>::Ptr &seed_points)
 {
     // Step 1: Partition the cloud based on z value
-    auto partition_point = std::partition(cloud_in->points.begin(), cloud_in->points.end(), [&](const pcl::PointXYZI &point)
+    auto partition_point = std::partition(cloud_in->points.begin(), cloud_in->points.end(), [&](const pcl::PointXYZ &point)
                                           { return point.z < -1.5 * sensor_height_; });
 
     // Step 2: The "above threshold" points are now in [partition_point, cloud_in->points.end()]
-    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>());
     filtered_cloud->points.assign(partition_point, cloud_in->points.end());
 
     // Step 3: Compute the LPR height by averaging the first 'num_lpr_' points in the filtered cloud
     double LPR_height = 0.0;
     int num_lpr = std::min(num_lpr_, static_cast<int>(filtered_cloud->points.size()));
-    if (num_lpr == 0)
-    {
-        seed_points->points.clear();
-        return;
-    }
 
     for (int i = 0; i < num_lpr; ++i)
     {
@@ -273,7 +271,6 @@ void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXY
 
     // Step 4: Add points below the LPR height + th_seeds_ to seed_points
     seed_points->points.clear();
-    seed_points->points.reserve(filtered_cloud->points.size());
     for (const auto &point : filtered_cloud->points)
     {
         if (point.z < LPR_height + th_seeds_)
@@ -325,11 +322,10 @@ visualization_msgs::msg::Marker pointcloud_roi_node::createRobotFootprintMarker(
     return marker;
 }
 
-void pointcloud_roi_node::removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud)
+void pointcloud_roi_node::removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
     // Create a new pointcloud to store points outside the robot footprint
-    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
-    filtered_cloud->points.reserve(cloud->points.size());
+    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>());
     
     // Filter out points that fall within the robot's 3D bounding box
     for (const auto& point : cloud->points) {

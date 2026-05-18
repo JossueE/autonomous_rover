@@ -2,6 +2,11 @@
 
 #include <cmath>
 
+VehicleFootprint::VehicleFootprint(double axle_to_front, double axle_to_back,
+                                   double width) {
+  setDimensions(axle_to_front, axle_to_back, width);
+}
+
 void VehicleFootprint::setDimensions(double axle_to_front, double axle_to_back,
                                      double width) {
   axle_to_front_ = axle_to_front;
@@ -37,35 +42,44 @@ void VehicleFootprint::createGeometry() {
   setCircles();
 }
 
+geometry_msgs::msg::Polygon
+VehicleFootprint::getGeometryAtState(const State &state) const {
+  geometry_msgs::msg::Polygon vehicle_poly_state;
+  for (const auto &point : vehicle_geometry_.points) {
+    geometry_msgs::msg::Point32 p;
+    p.x = state.x + point.x * std::cos(state.heading) -
+          point.y * std::sin(state.heading);
+    p.y = state.y + point.x * std::sin(state.heading) +
+          point.y * std::cos(state.heading);
+    vehicle_poly_state.points.push_back(p);
+  }
+  return vehicle_poly_state;
+}
+
 std::vector<Circle> VehicleFootprint::getCircles(const State &state) const {
   std::vector<Circle> result;
-  getCircles(state, result);
+  result.reserve(circles_.size());
+  for (const auto &circle : circles_) {
+    auto global_state = localToGlobal(state, State(circle.x, circle.y));
+    result.emplace_back(global_state.x, global_state.y, circle.r);
+  }
   return result;
 }
 
-void VehicleFootprint::getCircles(const State &state,
-                                  std::vector<Circle> &result) const {
-  result.clear();
-  result.reserve(circles_.size());
-  const double cos_heading = std::cos(state.heading);
-  const double sin_heading = std::sin(state.heading);
-  for (const auto &circle : circles_) {
-    const double x =
-        circle.x * cos_heading - circle.y * sin_heading + state.x;
-    const double y =
-        circle.x * sin_heading + circle.y * cos_heading + state.y;
-    result.emplace_back(x, y, circle.r);
-  }
+Circle VehicleFootprint::getBoundingCircle(const State &state) const {
+  auto global_center =
+      localToGlobal(state, State(bounding_circle_.x, bounding_circle_.y));
+  return Circle(global_center.x, global_center.y, bounding_circle_.r);
 }
 
-Circle VehicleFootprint::getBoundingCircle(const State &state) const {
-  const double cos_heading = std::cos(state.heading);
-  const double sin_heading = std::sin(state.heading);
-  const double x = bounding_circle_.x * cos_heading -
-                   bounding_circle_.y * sin_heading + state.x;
-  const double y = bounding_circle_.x * sin_heading +
-                   bounding_circle_.y * cos_heading + state.y;
-  return Circle(x, y, bounding_circle_.r);
+State VehicleFootprint::localToGlobal(const State &reference,
+                                      const State &target) const {
+  const double x = target.x * std::cos(reference.heading) -
+                   target.y * std::sin(reference.heading) + reference.x;
+  const double y = target.x * std::sin(reference.heading) +
+                   target.y * std::cos(reference.heading) + reference.y;
+  const double heading = reference.heading + target.heading;
+  return {x, y, heading};
 }
 
 visualization_msgs::msg::MarkerArray
@@ -101,12 +115,13 @@ VehicleFootprint::toMarkerArray(const std::string &frame_id,
 void VehicleFootprint::setCircles() {
   const double small_circle_shift = width_ / 4.0;
   const double small_circle_radius =
-      std::hypot(small_circle_shift, small_circle_shift);
+      std::sqrt(2.0 * std::pow(small_circle_shift, 2));
 
   bounding_circle_.x = (axle_to_front_ - axle_to_back_) / 2.0;
   bounding_circle_.y = 0.0;
-  bounding_circle_.r = std::hypot((axle_to_front_ + axle_to_back_) / 2.0,
-                                  width_ / 2.0);
+  bounding_circle_.r =
+      std::sqrt(std::pow((axle_to_front_ + axle_to_back_) / 2.0, 2) +
+                std::pow(width_ / 2.0, 2));
 
   circles_.emplace_back(-axle_to_back_ + small_circle_shift, width_ / 2.0,
                         small_circle_radius);

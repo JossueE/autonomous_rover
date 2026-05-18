@@ -1,14 +1,18 @@
 path_planning_node:
   ros__parameters:
     kinematics.model: "differential"     # Selectable model: ackermann or differential.
-    vehicle.axle_to_front: 0.275      # Distance from robot center to the front footprint using the minibase chassis length (0.55 m).
-    vehicle.axle_to_back: 0.275       # Distance from robot center to the rear footprint using the minibase chassis length (0.55 m).
-    vehicle.width: 0.44               # Total vehicle width including wheel thickness and separation from the minibase URDF.
+    vehicle.axle_to_front: 0.1        # Distance from reference axle / robot center to the front footprint (m).
+    vehicle.axle_to_back: 0.15        # Distance from reference axle / robot center to the rear footprint (m).
+    vehicle.width: 0.17               # Total vehicle width (m).
     planner.segment_steps: 4          # Number of rollout samples per motion primitive.
     planner.sample_distance: 0.05     # Distance advanced per rollout sample for forward primitives (m).
     planner.square_size_m: 3.0        # Side length of the local planning window used for local occupancy reconstruction (m).
     planner.safe_clear: 0.2           # Minimum clearance margin to obstacles used by the planner cost/rejection logic (m).
-    planner.obstacle_inflation_radius_cells: 1 # Extra obstacle inflation radius in local-grid cells.
+    planner.obstacle_inflation_radius_cells: 1 # [LEGACY, fallback only] Extra obstacle inflation radius in local-grid cells. Used only when planner.obstacle_inflation_radius_m <= 0.
+    planner.obstacle_inflation_radius_m: 0.05 # Extra obstacle inflation radius in meters. Converted to cells at runtime using the rescaled chunk resolution. Recommended: ~half the robot width.
+    planner.forward_distance: 7.0     # Distance (m) the local chunk origin is shifted ahead of the robot along its heading.
+    planner.chunk_radius_cells: 50    # Half-side of the local chunk extracted from the global map, in cells of the global map. Total chunk = (2*radius) x (2*radius) cells.
+    planner.scale_factor: 1.0         # Rescale factor for the local chunk. >1: more cells, smaller resolution; <1: fewer cells, larger resolution. The rescaled resolution is global_planner_resolution / scale_factor.
     ackermann.wheelbase: 0.08         # Distance between front and rear axle (m).
     ackermann.max_steering_angle: 0.1 # Maximum steering angle of the front wheels (rad).
     differential.linear_step: 0.05    # Forward distance per rollout sample for moving differential primitives (m).
@@ -17,63 +21,55 @@ path_planning_node:
     differential.include_in_place_rotation: true # Adds pure rotation primitives for the differential model.
     tree_depth: 7                     # Maximum depth of the A* search tree for local path planning.
     branching_factor: 5               # Number of possible branches (actions/commands) per tree level.
-    map_path: package://rover_bringup/maps/salon.osm # Path to the Lanelet2 (.osm) map file.
-    start_lanelet_id: 109          # ID of the starting lanelet for the global planner.
-    end_lanelet_id: 68             # ID of the goal lanelet for the global planner.
+    map_path: package://autonomous_robot_simulation/utils/test.osm # Path to the Lanelet2 (.osm) map file.
+    start_lanelet_id: 1379            # ID of the starting lanelet for the global planner.
+    end_lanelet_id: 1335              # ID of the goal lanelet for the global planner.
     x_offset: 0.0                     # X offset to align map and robot frame (m).
     y_offset: 0.0                     # Y offset to align map and robot frame (m).
-    z_offset: -2.10                   # Z offset applied to TF pose to match lanelet map z projection. Was hardcoded -2.10 in source.
-    num_lateral_offsets: 0            # Number of lateral offsets to generate alternative lanes (0 = only center lane).
+    z_offset: -2.10                   # Z offset applied to TF pose to match lanelet map z projection (m). DO NOT MODIFY UNLESS YOUR MAP HAS A DIFFERENT Z PROJECTION.
+    pose_frame: "lidar_link"          # TF frame used to estimate the planner pose in the map frame.
     global_planner_resolution: 0.2         # Resolution of the global planner grid (m).
     global_planner_close_radius: 1         # Radius around the robot to consider as "close" for the global planner (m).
     global_planner_close_iters: 1          # Number of iterations for close-range global planning.
     global_planner_outside_value: 100      # Cost value for outside the drivable area in the global planner.
-    pose_frame: "base_footprint"        # TF frame used to estimate the planner pose in the map frame.
     global_planner_frame_id: "map"         # Frame ID for the global planner occupancy grid.
     global_planner_occupancy_output_topic: "/global_planner_occupancy_grid" # Topic to publish the occupancy grid.
 
 pointcloud_clustering_node:
   ros__parameters:
-    GROUND_THRESHOLD: 0.1        # Threshold for separating ground vs non-ground points (height or z value).
-    CLUSTER_THRESH: 0.20          # Maximum distance between points to belong to the same cluster (m). Increased for dense raw Kinect clouds.
-    CLUSTER_MAX_SIZE: 60000      # Raised from 8000 — raw Kinect clusters easily exceed 8k pts, causing all clusters to be silently dropped.
-    CLUSTER_MIN_SIZE: 80          # Slightly higher to reject noise specks while still catching real obstacles.
+    CLUSTER_THRESH: 0.10          # Maximum distance between points to belong to the same cluster (m). Applies before convex or concave hull generation.
+    CLUSTER_MAX_SIZE: 1000       # Maximum allowed number of points in a cluster (filters overly large objects). Applies before convex or concave hull generation.
+    CLUSTER_MIN_SIZE: 30        # Minimum number of points to consider a valid cluster (filters noise). Applies before convex or concave hull generation.
     HULL_MODE: "concave"          # Hull generation mode: "convex" or "concave".
-    CONCAVE_ALPHA: 0.25          # Looser concave hull: faster computation and fewer degenerate vertices on dense indoor clouds.
-    USE_PCA_BOX: false           # If true, use PCA to fit an oriented bounding box to clusters.
-    DISPLACEMENT_THRESH: 0.5     # Maximum allowed displacement between consecutive detections for tracking (m).
-    IOU_THRESH: 0.7              # IoU threshold to associate clusters across frames (for object tracking).
-    USE_TRACKING: true           # If true, enable temporal tracking of detected clusters/objects.
-    FRAME_ID : "base_footprint"       # Reference frame for published clustering results.
+    CONCAVE_ALPHA: 0.15          # Concavity tuning used only when HULL_MODE is "concave".
+    FRAME_ID : "base_link"       # Reference frame for published clustering results.
 
 pointcloud_roi_node:
   ros__parameters:
     name_space: "robot_footprint"        # Namespace for topics/objects related to the robot footprint.
-    frame_id: "depth_camera_link"                # Frame in which ROI and footprint are defined.
-    pointcloud_topic: "/k4a/points2"         # Input topic of the converted LiDAR point cloud with ROS TF frame IDs.
+    frame_id: "base_link"                # Frame in which ROI and footprint are defined.
+    pointcloud_topic: "/lidar/points_pcl"         # Input topic of the converted LiDAR point cloud with ROS TF frame IDs.
     output_topic: "/points_rotated"               # Output topic for filtered/rotated point cloud (full ROI).
     output_topic_ground: "/points_rotated_notground"  # Output topic for non-ground points.
     sensor_rotation_y_: 0.0              # Sensor rotation around Y axis (rad). Compensates LiDAR tilt.
-    voxel_condition: false               # SVD ground fitting assumes Z=up (LiDAR frame); Kinect optical frame (Z=depth) breaks it.
-    roi_max_x_: 6.0                      # Reduced from 10m — indoor rooms don't need 10m forward range; halves point count.
-    roi_max_y_: 0.10                     # Kinect optical frame: Y=down. Floor is at Y≈+0.48m (sensor height). Tighter lower cap to keep the floor out of the obstacle pipeline.
-    roi_max_z_: 6.0                      # Kinect optical frame: Z=depth. Extended far depth range to see farther obstacles.
-    roi_min_x_: -0.5                     # Lateral left limit (m).
-    roi_min_y_: -0.5                     # Ceiling/upward limit — Y<0 is above camera in optical frame.
-    roi_min_z_: 1.0                     # Minimum depth (m) — ignore points closer than 20cm to avoid camera noise.
-    voxel_leaf_size_x: 0.05              # 5 cm voxel — reduces 95k raw pts to ~3-8k while preserving obstacle shape.
-    voxel_leaf_size_y: 0.05
-    voxel_leaf_size_z: 0.05
-    num_seg_: 25                         # Number of segments used in ground segmentation algorithm.
-    num_iter_: 15                        # Number of iterations for ground plane fitting (e.g., RANSAC).
-    num_lpr_: 200                        # Reduced from 400 — sufficient seed points after voxel downsampling.
-    th_seeds_: 0.2                       # Tighter seed window vs 0.3 — cleaner initial ground plane estimate.
-    th_dist_: 0.12                       # (unused while voxel_condition=false) distance threshold above ground plane.
-    sensor_height_: 0.48                 # Sensor height above the ground (m).
-    robot_footprint_x_max: 0.275         # Robot footprint max X from the minibase chassis half-length.
-    robot_footprint_y_max: 0.22          # Robot footprint max Y including wheel outer width from the minibase URDF.
+    voxel_condition: true                # If true, apply voxel grid downsampling.
+    roi_max_x_: 10.0                     # ROI max X limit (m, forward).
+    roi_max_y_: 3.0                      # ROI max Y limit (m, sideways).
+    roi_max_z_: 1.5                      # ROI max Z limit (m, upward).
+    roi_min_x_: -1.0                     # ROI min X limit (m, backward).
+    roi_min_y_: -3.0                     # ROI min Y limit (m, sideways opposite).
+    roi_min_z_: -0.2                     # ROI min Z limit (m, downward).
+    voxel_leaf_size_x: 0.1               # Voxel grid leaf size in X (m).
+    voxel_leaf_size_y: 0.1               # Voxel grid leaf size in Y (m).
+    voxel_leaf_size_z: 0.1               # Voxel grid leaf size in Z (m).
+    num_lpr_: 400                        # Number of lowest points used as initial ground seeds (LPR).
+    th_seeds_: 0.3                       # Height threshold for selecting ground seed points.
+    th_dist_: 0.3                        # Distance threshold to the plane to classify a point as ground (m).
+    sensor_height_: 0.08                 # Sensor height above the ground (m).
+    robot_footprint_x_max: 0.11          # Robot footprint max X (forward extent, m).
+    robot_footprint_y_max: 0.1           # Robot footprint max Y (lateral extent, m).
     robot_footprint_z_max: 0.06          # Robot footprint max Z (upward extent, m).
-    robot_footprint_x_min: -0.275        # Robot footprint min X from the minibase chassis half-length.
-    robot_footprint_y_min: -0.22         # Robot footprint min Y including wheel outer width from the minibase URDF.
+    robot_footprint_x_min: -0.1          # Robot footprint min X (backward extent, m).
+    robot_footprint_y_min: -0.1          # Robot footprint min Y (opposite lateral extent, m).
     robot_footprint_z_min: -0.1          # Robot footprint min Z (downward extent, m).
     robot_footprint_topic: "/robot_footprint_polygon"  # Topic where the robot footprint polygon is published.
