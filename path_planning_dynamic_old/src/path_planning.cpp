@@ -1,8 +1,6 @@
 #include <path_planning.hpp>
 
-#include <chrono>
 #include <cctype>
-#include <functional>
 
 namespace {
 
@@ -33,11 +31,7 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<double>("planner.square_size_m", 1.6);
     this->declare_parameter<double>("planner.safe_clear", 0.2);
     this->declare_parameter<int>("planner.obstacle_inflation_radius_cells", 1);
-    this->declare_parameter<double>("planner.obstacle_inflation_radius_m", 0.0);
     this->declare_parameter<int>("planner.branching_factor", 0);
-    this->declare_parameter<double>("planner.forward_distance", forward_distance);
-    this->declare_parameter<int>("planner.chunk_radius_cells", chunk_radius);
-    this->declare_parameter<double>("planner.scale_factor", scale_factor);
     this->declare_parameter<double>("ackermann.wheelbase", 0.0);
     this->declare_parameter<double>("ackermann.max_steering_angle", 0.0);
     this->declare_parameter<double>("differential.linear_step", 0.0);
@@ -58,7 +52,6 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<double>("x_offset", 0.0);
     this->declare_parameter<double>("y_offset", 0.0);
     this->declare_parameter<double>("z_offset", 0.0);
-    this->declare_parameter<std::string>("pose_frame", "lidar_link");
     this->declare_parameter<int>("start_lanelet_id", 0);
     this->declare_parameter<int>("end_lanelet_id", 0);
 
@@ -67,6 +60,7 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<int>("global_planner_close_radius", 0);
     this->declare_parameter<int>("global_planner_close_iters", 0);
     this->declare_parameter<int>("global_planner_outside_value", 100);
+    this->declare_parameter<std::string>("pose_frame", "depth_camera_link");
     this->declare_parameter<std::string>("global_planner_frame_id", "map");
     this->declare_parameter<std::string>("global_planner_occupancy_output_topic", "occupancy_grid_complete_map");
 
@@ -92,11 +86,7 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("planner.square_size_m", configured_square_size_m);
     this->get_parameter("planner.safe_clear", configured_safe_clear);
     this->get_parameter("planner.obstacle_inflation_radius_cells", configured_obstacle_inflation_radius_cells);
-    this->get_parameter("planner.obstacle_inflation_radius_m", obstacle_inflation_radius_m_);
     this->get_parameter("planner.branching_factor", configured_branching_factor);
-    this->get_parameter("planner.forward_distance", forward_distance);
-    this->get_parameter("planner.chunk_radius_cells", chunk_radius);
-    this->get_parameter("planner.scale_factor", scale_factor);
     this->get_parameter("ackermann.wheelbase", configured_ackermann_wheelbase);
     this->get_parameter("ackermann.max_steering_angle", configured_ackermann_max_steering_angle);
     this->get_parameter("differential.linear_step", differential_linear_step_);
@@ -126,7 +116,6 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("x_offset", x_offset_);
     this->get_parameter("y_offset", y_offset_);
     this->get_parameter("z_offset", z_offset_);
-    this->get_parameter("pose_frame", pose_frame_);
     this->get_parameter("start_lanelet_id", start_lanelet_id_);
     this->get_parameter("end_lanelet_id", end_lanelet_id_);
 
@@ -140,17 +129,6 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     SAFE_CLEAR = configured_safe_clear > 0.0 ? configured_safe_clear : 0.2;
     obstacle_inflation_radius_cells_ =
         std::max(0, configured_obstacle_inflation_radius_cells);
-    obstacle_inflation_radius_m_ = std::max(0.0, obstacle_inflation_radius_m_);
-
-    // chunk_radius is parameter-driven; keep chunk_size in sync (cells == 2*radius)
-    chunk_radius = std::max(1, chunk_radius);
-    chunk_size = chunk_radius * 2;
-    if (scale_factor <= 0.0) {
-        RCLCPP_WARN(this->get_logger(),
-            "planner.scale_factor must be > 0 (got %f); falling back to 1.0.",
-            scale_factor);
-        scale_factor = 1.0;
-    }
     branching_factor = selectConfiguredInt(configured_branching_factor, legacy_branching_factor);
     ackermann_wheelbase_ = selectConfiguredDouble(configured_ackermann_wheelbase, legacy_wheelbase);
     ackermann_max_steering_angle_ =
@@ -167,6 +145,7 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("global_planner_close_radius", global_planner_close_radius_);
     this->get_parameter("global_planner_close_iters", global_planner_close_iters_);
     this->get_parameter("global_planner_outside_value", global_planner_outside_value_);
+    this->get_parameter("pose_frame", pose_frame_);
     this->get_parameter("global_planner_frame_id", global_planner_frame_id_);
     this->get_parameter("global_planner_occupancy_output_topic", global_planner_occupancy_output_topic_);
 
@@ -242,20 +221,15 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.safe_clear: %f\033[0m", SAFE_CLEAR);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.obstacle_inflation_radius_cells: %d\033[0m",
                 obstacle_inflation_radius_cells_);
-    RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.obstacle_inflation_radius_m: %f\033[0m",
-                obstacle_inflation_radius_m_);
-    RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.forward_distance: %f\033[0m", forward_distance);
-    RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.chunk_radius_cells: %d\033[0m", chunk_radius);
-    RCLCPP_INFO(this->get_logger(), "\033[1;34mplanner.scale_factor: %f\033[0m", scale_factor);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mtree_depth: %d\033[0m", tree_depth);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mbranching_factor: %d\033[0m", branching_factor);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mmap_path: %s\033[0m", map_path_.c_str());
     RCLCPP_INFO(this->get_logger(), "\033[1;34mx_offset: %f\033[0m", x_offset_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34my_offset: %f\033[0m", y_offset_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mz_offset: %f\033[0m", z_offset_);
-    RCLCPP_INFO(this->get_logger(), "\033[1;34mpose_frame: %s\033[0m", pose_frame_.c_str());
     RCLCPP_INFO(this->get_logger(), "\033[1;34mstart_lanelet_id: %d\033[0m", start_lanelet_id_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mend_lanelet_id: %d\033[0m", end_lanelet_id_);
+    RCLCPP_INFO(this->get_logger(), "\033[1;34mpose_frame: %s\033[0m", pose_frame_.c_str());
 
     all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
     publishGlobalPlanner();
@@ -293,8 +267,7 @@ void path_planning::getCurrentRobotState()
     }
     catch (tf2::TransformException &ex)
     {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Transform error (map <- %s): %s", pose_frame_.c_str(), ex.what());
+        std::cout << red << "Transform error: " << ex.what() << reset << std::endl;
         car_state_valid_ = false;
     }
 }
@@ -304,10 +277,10 @@ void path_planning::getCurrentRobotState()
 // =============================
 void path_planning::publishGlobalPlanner()
 {
-    RCLCPP_DEBUG(this->get_logger(), "Publishing global planner with %zu waypoints",
-                 all_waypoints_from_global_planner_.size());
+    std::cout << green << "Publishing global planner" << reset << std::endl;
+    std::cout << green << "Global planner size: " << all_waypoints_from_global_planner_.size() << reset << std::endl;
     global_planner_markers_.markers.clear();
-
+    
     // Clear previous text markers
     visualization_msgs::msg::Marker clear_text;
     clear_text.header.frame_id = "map";
@@ -315,24 +288,7 @@ void path_planning::publishGlobalPlanner()
     clear_text.action = visualization_msgs::msg::Marker::DELETEALL;
     clear_text.ns = "global_planner_text";
     global_planner_markers_.markers.push_back(clear_text);
-
-    // Palette for the per-lane-sequence color cycling.
-    // Indices 0..9 match the previous hardcoded switch and any sequence id is
-    // mapped via (seq_id % palette_size) to keep the rendering identical.
-    static constexpr struct { float r, g, b; } palette[] = {
-        {0.0f, 0.0f, 1.0f},   // 0: Blue (main path)
-        {0.0f, 1.0f, 0.0f},   // 1: Green
-        {1.0f, 0.0f, 0.0f},   // 2: Red
-        {1.0f, 1.0f, 0.0f},   // 3: Yellow
-        {1.0f, 0.0f, 1.0f},   // 4: Magenta
-        {0.0f, 1.0f, 1.0f},   // 5: Cyan
-        {1.0f, 0.5f, 0.0f},   // 6: Orange
-        {0.5f, 0.0f, 1.0f},   // 7: Purple
-        {1.0f, 0.75f, 0.8f},  // 8: Pink
-        {0.5f, 0.8f, 1.0f}    // 9: Light Blue
-    };
-    constexpr int palette_size = static_cast<int>(sizeof(palette) / sizeof(palette[0]));
-
+    
     for (size_t i = 0; i < all_waypoints_from_global_planner_.size(); i++)
     {
             // Create waypoint marker for main path from the global planner
@@ -345,13 +301,78 @@ void path_planning::publishGlobalPlanner()
             waypoint_marker.action = visualization_msgs::msg::Marker::ADD;
 
             waypoint_marker.color.a = 0.8;
-
-            // Color based on lane_sequence_id (mod palette size).
-            const int seq_id = all_waypoints_from_global_planner_[i].lane_sequence_id;
-            const int color_index = ((seq_id % palette_size) + palette_size) % palette_size;
-            waypoint_marker.color.r = palette[color_index].r;
-            waypoint_marker.color.g = palette[color_index].g;
-            waypoint_marker.color.b = palette[color_index].b;
+            
+            // Color based on lane_sequence_id
+            int seq_id = all_waypoints_from_global_planner_[i].lane_sequence_id;
+            switch (seq_id) {
+                case 0: // Main path - Blue
+                    waypoint_marker.color.r = 0.0;
+                    waypoint_marker.color.g = 0.0;
+                    waypoint_marker.color.b = 1.0;
+                    break;
+                case 1: // First neighbor group - Green
+                    waypoint_marker.color.r = 0.0;
+                    waypoint_marker.color.g = 1.0;
+                    waypoint_marker.color.b = 0.0;
+                    break;
+                case 2: // Second neighbor group - Red
+                    waypoint_marker.color.r = 1.0;
+                    waypoint_marker.color.g = 0.0;
+                    waypoint_marker.color.b = 0.0;
+                    break;
+                case 3: // Third neighbor group - Yellow
+                    waypoint_marker.color.r = 1.0;
+                    waypoint_marker.color.g = 1.0;
+                    waypoint_marker.color.b = 0.0;
+                    break;
+                case 4: // Fourth neighbor group - Magenta
+                    waypoint_marker.color.r = 1.0;
+                    waypoint_marker.color.g = 0.0;
+                    waypoint_marker.color.b = 1.0;
+                    break;
+                case 5: // Fifth neighbor group - Cyan
+                    waypoint_marker.color.r = 0.0;
+                    waypoint_marker.color.g = 1.0;
+                    waypoint_marker.color.b = 1.0;
+                    break;
+                case 6: // Sixth neighbor group - Orange
+                    waypoint_marker.color.r = 1.0;
+                    waypoint_marker.color.g = 0.5;
+                    waypoint_marker.color.b = 0.0;
+                    break;
+                case 7: // Seventh neighbor group - Purple
+                    waypoint_marker.color.r = 0.5;
+                    waypoint_marker.color.g = 0.0;
+                    waypoint_marker.color.b = 1.0;
+                    break;
+                case 8: // Eighth neighbor group - Pink
+                    waypoint_marker.color.r = 1.0;
+                    waypoint_marker.color.g = 0.75;
+                    waypoint_marker.color.b = 0.8;
+                    break;
+                case 9: // Ninth neighbor group - Light Blue
+                    waypoint_marker.color.r = 0.5;
+                    waypoint_marker.color.g = 0.8;
+                    waypoint_marker.color.b = 1.0;
+                    break;
+                default: // Higher sequence IDs - Cycle through colors
+                    {
+                        int color_index = seq_id % 10;
+                        switch (color_index) {
+                            case 0: waypoint_marker.color.r = 0.0; waypoint_marker.color.g = 0.0; waypoint_marker.color.b = 1.0; break;
+                            case 1: waypoint_marker.color.r = 0.0; waypoint_marker.color.g = 1.0; waypoint_marker.color.b = 0.0; break;
+                            case 2: waypoint_marker.color.r = 1.0; waypoint_marker.color.g = 0.0; waypoint_marker.color.b = 0.0; break;
+                            case 3: waypoint_marker.color.r = 1.0; waypoint_marker.color.g = 1.0; waypoint_marker.color.b = 0.0; break;
+                            case 4: waypoint_marker.color.r = 1.0; waypoint_marker.color.g = 0.0; waypoint_marker.color.b = 1.0; break;
+                            case 5: waypoint_marker.color.r = 0.0; waypoint_marker.color.g = 1.0; waypoint_marker.color.b = 1.0; break;
+                            case 6: waypoint_marker.color.r = 1.0; waypoint_marker.color.g = 0.5; waypoint_marker.color.b = 0.0; break;
+                            case 7: waypoint_marker.color.r = 0.5; waypoint_marker.color.g = 0.0; waypoint_marker.color.b = 1.0; break;
+                            case 8: waypoint_marker.color.r = 1.0; waypoint_marker.color.g = 0.75; waypoint_marker.color.b = 0.8; break;
+                            case 9: waypoint_marker.color.r = 0.5; waypoint_marker.color.g = 0.8; waypoint_marker.color.b = 1.0; break;
+                        }
+                    }
+                    break;
+            }
 
             waypoint_marker.pose.position.x = all_waypoints_from_global_planner_[i].x;
             waypoint_marker.pose.position.y = all_waypoints_from_global_planner_[i].y;
@@ -404,13 +425,14 @@ void path_planning::publishGlobalPlanner()
 // =============================
 void path_planning::publishGlobalPlannerOccupancyGrid()
 {
-    RCLCPP_INFO(this->get_logger(),
-        "Publishing global planner occupancy grid (%ux%u, resolution=%.4fm)",
-        global_planner_occupancy_grid_.info.width,
-        global_planner_occupancy_grid_.info.height,
-        static_cast<double>(global_planner_occupancy_grid_.info.resolution));
 
+    std::cout << green << "Publishing global planner occupancy grid" << reset << std::endl;
+    std::cout << green << "Grid size: " << global_planner_occupancy_grid_.info.width << "x" 
+                << global_planner_occupancy_grid_.info.height << ", resolution: " 
+                << global_planner_occupancy_grid_.info.resolution << reset << std::endl;
+    
     global_planner_occupancy_grid_publisher_->publish(global_planner_occupancy_grid_);
+
 }
 
 // =============================
@@ -420,23 +442,20 @@ void path_planning::obstacle_info_callback(const path_planning_dynamic::msg::Obs
 {
     if (!global_map_)
     {
-        RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Global map is not available");
+        RCLCPP_ERROR(this->get_logger(), "Global map is not available");
         return;
     }
     if (msg->obstacles.empty())
     {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Obstacle collection is empty; planning with base map only");
+        RCLCPP_WARN(this->get_logger(), "Obstacle collection is empty; planning with base map only");
     }
     else
     {
-        RCLCPP_DEBUG(this->get_logger(),
-            "Obstacle collection received with %zu obstacles", msg->obstacles.size());
+        std::cout << green << "Obstacles are available and global map is available" << reset << std::endl;
     }
     getCurrentRobotState();
     publishGlobalPlanner();
-    RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
+    RCLCPP_INFO(this->get_logger(), "\033Path planning map combination update.\033[0m");
     map_combination(msg);
 }
 
@@ -462,365 +481,235 @@ cv::Mat path_planning::rescaleChunk(const cv::Mat &chunk_mat, double scale_facto
     return rescaled_chunk;
 }
 
-// ---------- map_combination helpers (declarations in path_planning.hpp) ----------
-void path_planning::worldToGrid(double wx, double wy,
-                                const nav_msgs::msg::MapMetaData &info,
-                                int &gx, int &gy)
-{
-    // Use floor so negative offsets land in the correct cell. static_cast<int>
-    // truncates toward zero and produces off-by-one errors near the origin.
-    gx = static_cast<int>(std::floor((wx - info.origin.position.x) / info.resolution));
-    gy = static_cast<int>(std::floor((wy - info.origin.position.y) / info.resolution));
-}
-
-bool path_planning::isInsideGrid(int gx, int gy,
-                                 const nav_msgs::msg::MapMetaData &info)
-{
-    return gx >= 0 && gx < static_cast<int>(info.width) &&
-           gy >= 0 && gy < static_cast<int>(info.height);
-}
-
-bool path_planning::validateScaleFactor(double sf) const
-{
-    if (!(sf > 0.0) || !std::isfinite(sf)) {
-        RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Invalid scale_factor %f; must be > 0 and finite. Skipping update.", sf);
-        return false;
-    }
-    return true;
-}
-
-int path_planning::computeInflationCells() const
-{
-    if (!rescaled_chunk_ || rescaled_chunk_->info.resolution <= 0.0) {
-        return std::max(0, obstacle_inflation_radius_cells_);
-    }
-    if (obstacle_inflation_radius_m_ > 0.0) {
-        return std::max(0, static_cast<int>(std::round(
-            obstacle_inflation_radius_m_ / rescaled_chunk_->info.resolution)));
-    }
-    return std::max(0, obstacle_inflation_radius_cells_);
-}
-
-bool path_planning::extractChunkAroundRobot(nav_msgs::msg::OccupancyGrid &chunk) const
-{
-    // Window origin slightly ahead of the robot to bias visibility forward.
-    const double origin_world_x = car_state_->x + forward_distance * std::cos(car_state_->heading);
-    const double origin_world_y = car_state_->y + forward_distance * std::sin(car_state_->heading);
-
-    int car_x_grid = 0;
-    int car_y_grid = 0;
-    worldToGrid(origin_world_x, origin_world_y, global_map_->info, car_x_grid, car_y_grid);
-
-    const int gw = static_cast<int>(global_map_->info.width);
-    const int gh = static_cast<int>(global_map_->info.height);
-
-    // Clamp BOTH bounds to [0, dimension]. Previously only one side was clamped,
-    // which made min > max underflow when the robot was far outside the map.
-    const int min_x = std::clamp(car_x_grid - chunk_radius, 0, gw);
-    const int max_x = std::clamp(car_x_grid + chunk_radius, 0, gw);
-    const int min_y = std::clamp(car_y_grid - chunk_radius, 0, gh);
-    const int max_y = std::clamp(car_y_grid + chunk_radius, 0, gh);
-
-    if (max_x <= min_x || max_y <= min_y) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Chunk window is empty (robot likely outside the global map). "
-            "car_grid=(%d,%d), min=(%d,%d), max=(%d,%d), map=%dx%d",
-            car_x_grid, car_y_grid, min_x, min_y, max_x, max_y, gw, gh);
-        return false;
-    }
-
-    chunk.header = global_map_->header;
-    chunk.info.resolution = global_map_->info.resolution;
-    chunk.info.width = static_cast<uint32_t>(max_x - min_x);
-    chunk.info.height = static_cast<uint32_t>(max_y - min_y);
-    chunk.info.origin.position.x =
-        global_map_->info.origin.position.x + min_x * global_map_->info.resolution;
-    chunk.info.origin.position.y =
-        global_map_->info.origin.position.y + min_y * global_map_->info.resolution;
-    chunk.info.origin.position.z = car_state_->z;
-    chunk.info.origin.orientation.w = 1.0;
-
-    chunk.data.assign(static_cast<size_t>(chunk.info.width) * chunk.info.height, 0);
-    for (int y = min_y; y < max_y; ++y) {
-        for (int x = min_x; x < max_x; ++x) {
-            const int global_index = y * gw + x;
-            const int local_x = x - min_x;
-            const int local_y = y - min_y;
-            const int chunk_index = local_y * static_cast<int>(chunk.info.width) + local_x;
-            chunk.data[chunk_index] = global_map_->data[global_index];
-        }
-    }
-    return true;
-}
-
-bool path_planning::rescaleOccupancyGridChunk(const nav_msgs::msg::OccupancyGrid &chunk)
-{
-    if (chunk.info.width == 0 || chunk.info.height == 0 || chunk.info.resolution <= 0.0) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "rescaleOccupancyGridChunk: invalid input chunk (%ux%u, res=%f)",
-            chunk.info.width, chunk.info.height, static_cast<double>(chunk.info.resolution));
-        return false;
-    }
-
-    const cv::Mat chunk_mat = toMat(chunk);
-    if (chunk_mat.empty()) {
-        RCLCPP_WARN(this->get_logger(), "rescaleOccupancyGridChunk: empty input cv::Mat");
-        return false;
-    }
-
-    const cv::Mat rescaled_chunk_mat = rescaleChunk(chunk_mat, scale_factor);
-    if (rescaled_chunk_mat.empty() || rescaled_chunk_mat.cols <= 0 || rescaled_chunk_mat.rows <= 0) {
-        RCLCPP_WARN(this->get_logger(), "rescaleOccupancyGridChunk: empty rescaled cv::Mat");
-        return false;
-    }
-
-    const double new_resolution = chunk.info.resolution / scale_factor;
-    if (!(new_resolution > 0.0) || !std::isfinite(new_resolution)) {
-        RCLCPP_ERROR(this->get_logger(),
-            "Computed rescaled resolution is invalid: %f (chunk_res=%f, scale=%f)",
-            new_resolution, static_cast<double>(chunk.info.resolution), scale_factor);
-        return false;
-    }
-
-    RCLCPP_DEBUG(this->get_logger(),
-        "Rescale: original_res=%.4fm scale=%.4f -> new_res=%.4fm | "
-        "size_before=%ux%u size_after=%dx%d",
-        static_cast<double>(chunk.info.resolution), scale_factor, new_resolution,
-        chunk.info.width, chunk.info.height,
-        rescaled_chunk_mat.cols, rescaled_chunk_mat.rows);
-
-    rescaled_chunk_->header = global_map_->header;
-    rescaled_chunk_->info.resolution = static_cast<float>(new_resolution);
-    rescaled_chunk_->info.width = static_cast<uint32_t>(rescaled_chunk_mat.cols);
-    rescaled_chunk_->info.height = static_cast<uint32_t>(rescaled_chunk_mat.rows);
-    rescaled_chunk_->info.origin.position.x = chunk.info.origin.position.x;
-    rescaled_chunk_->info.origin.position.y = chunk.info.origin.position.y;
-    rescaled_chunk_->info.origin.position.z = car_state_->z;
-    rescaled_chunk_->info.origin.orientation.w = 1.0;
-    rescaled_chunk_->data.assign(
-        static_cast<size_t>(rescaled_chunk_->info.width) * rescaled_chunk_->info.height, 0);
-
-    // Convert OpenCV grayscale (254 free, 0 occupied, 205 unknown) back to ROS
-    // occupancy values (0 free, 100 occupied, -1 unknown).
-    const size_t total_cells = static_cast<size_t>(rescaled_chunk_mat.rows) *
-                               static_cast<size_t>(rescaled_chunk_mat.cols);
-    for (size_t i = 0; i < total_cells; i++) {
-        const uint8_t v = rescaled_chunk_mat.data[i];
-        if (v == 254) {
-            rescaled_chunk_->data[i] = 0;
-        } else if (v == 0) {
-            rescaled_chunk_->data[i] = 100;
-        } else {
-            rescaled_chunk_->data[i] = -1;
-        }
-    }
-    return true;
-}
-
-void path_planning::buildWindowMask(cv::Mat &window_mask,
-                                    std::vector<cv::Point> &window_polygon) const
-{
-    const double res = rescaled_chunk_->info.resolution;
-    const double cos_h = std::cos(car_state_->heading);
-    const double sin_h = std::sin(car_state_->heading);
-
-    int car_gx = 0, car_gy = 0;
-    worldToGrid(car_state_->x, car_state_->y, rescaled_chunk_->info, car_gx, car_gy);
-
-    const double half = square_size_m_ / 2.0;
-    static constexpr std::pair<double, double> corners[] = {
-        {-1.0, -1.0}, { 1.0, -1.0}, { 1.0,  1.0}, {-1.0,  1.0}
-    };
-
-    window_polygon.clear();
-    window_polygon.reserve(4);
-    for (const auto &c : corners) {
-        const double cx = c.first * half;
-        const double cy = c.second * half;
-        const double rx = cx * cos_h - cy * sin_h;
-        const double ry = cx * sin_h + cy * cos_h;
-        const int gx = car_gx + static_cast<int>(std::round(rx / res));
-        const int gy = car_gy + static_cast<int>(std::round(ry / res));
-        window_polygon.emplace_back(gx, gy);
-    }
-
-    window_mask = cv::Mat(rescaled_chunk_->info.height, rescaled_chunk_->info.width,
-                          CV_8UC1, cv::Scalar(0));
-    cv::fillConvexPoly(window_mask, window_polygon, cv::Scalar(255));
-}
-
-// ---------- map_combination ----------
 void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg)
 {
-    if (!car_state_valid_) {
+    if (!car_state_valid_)
+    {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
             "Skipping map_combination: robot pose not yet available (TF lookup failed).");
         return;
     }
-    if (!global_map_ || global_map_->data.empty() ||
-        global_map_->info.resolution <= 0.0 ||
-        global_map_->info.width == 0 || global_map_->info.height == 0) {
-        RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Skipping map_combination: global_map_ is missing or invalid (res=%f, %ux%u, data=%zu).",
-            global_map_ ? static_cast<double>(global_map_->info.resolution) : 0.0,
-            global_map_ ? global_map_->info.width : 0u,
-            global_map_ ? global_map_->info.height : 0u,
-            global_map_ ? global_map_->data.size() : 0);
-        return;
-    }
-    if (!validateScaleFactor(scale_factor)) {
-        return;
-    }
 
-    const auto init_time = std::chrono::system_clock::now();
+    auto init_time = std::chrono::system_clock::now();
     const auto current_stamp = this->now();
+    // clean the rescaled_chunk_
     rescaled_chunk_->data.clear();
 
-    // 1) Extract a chunk of the global map around the robot.
+    // Compute grid_map_origin position
+    State grid_map_origin;
+
+    // Calculate the position based on the car's heading
+    grid_map_origin.x = car_state_->x + forward_distance * cos(car_state_->heading);
+    grid_map_origin.y = car_state_->y + forward_distance * sin(car_state_->heading);
+    grid_map_origin.z = car_state_->z; // Same height as car's position
+    grid_map_origin.heading = car_state_->heading;
+
+    // Convert car state to grid coordinates
+    int car_x_grid = static_cast<int>((grid_map_origin.x - global_map_->info.origin.position.x) / global_map_->info.resolution);
+    int car_y_grid = static_cast<int>((grid_map_origin.y - global_map_->info.origin.position.y) / global_map_->info.resolution);
+
+    // Define chunk boundaries
+    int min_x = std::max(0, car_x_grid - chunk_radius);
+    int max_x = std::min(static_cast<int>(global_map_->info.width), car_x_grid + chunk_radius);
+    int min_y = std::max(0, car_y_grid - chunk_radius);
+    int max_y = std::min(static_cast<int>(global_map_->info.height), car_y_grid + chunk_radius);
+
+    // Initialize the chunk grid
     nav_msgs::msg::OccupancyGrid chunk;
-    if (!extractChunkAroundRobot(chunk)) {
+    chunk.header = global_map_->header;
+    chunk.info.resolution = global_map_->info.resolution;
+    chunk.info.width = max_x - min_x;
+    chunk.info.height = max_y - min_y;
+    chunk.info.origin.position.x = global_map_->info.origin.position.x + min_x * global_map_->info.resolution;
+    chunk.info.origin.position.y = global_map_->info.origin.position.y + min_y * global_map_->info.resolution;
+    chunk.info.origin.position.z = car_state_->z;
+    chunk.info.origin.orientation.w = 1.0;
+
+    if (static_cast<int>(chunk.info.width) <= 0 || static_cast<int>(chunk.info.height) <= 0)
+    {
+        RCLCPP_WARN(this->get_logger(),
+            "Robot position (%.2f, %.2f) projects outside map bounds; skipping map_combination.",
+            car_state_->x, car_state_->y);
         return;
     }
 
-    // 2) Rescale (cv::resize) and copy back to OccupancyGrid using the corrected resolution.
-    if (!rescaleOccupancyGridChunk(chunk)) {
-        return;
+    chunk.data.resize(chunk.info.width * chunk.info.height, 0);
+
+    for (int y = min_y; y < max_y; ++y)
+    {
+        for (int x = min_x; x < max_x; ++x)
+        {
+            int global_index = y * global_map_->info.width + x;
+            int local_x = x - min_x;
+            int local_y = y - min_y;
+            int chunk_index = local_y * chunk.info.width + local_x;
+
+            chunk.data[chunk_index] = global_map_->data[global_index];
+        }
     }
 
-    // 3) Local planning window (square_size_m_ centered ahead of the robot).
-    cv::Mat window_mask;
+    cv::Mat chunk_mat = toMat(chunk);
+    cv::Mat rescaled_chunk_mat = rescaleChunk(chunk_mat, scale_factor);
+
+    rescaled_chunk_->header = global_map_->header;
+    rescaled_chunk_->info.resolution = 0.2;
+    rescaled_chunk_->info.width = rescaled_chunk_mat.cols;
+    rescaled_chunk_->info.height = rescaled_chunk_mat.rows;
+    rescaled_chunk_->info.origin.position.x = chunk.info.origin.position.x;
+    rescaled_chunk_->info.origin.position.y = chunk.info.origin.position.y;
+    rescaled_chunk_->info.origin.position.z = car_state_->z ;
+    rescaled_chunk_->info.origin.orientation.w = 1.0;
+
+    rescaled_chunk_->data.resize(rescaled_chunk_->info.width * rescaled_chunk_->info.height, 0);
+
+    for (int i = 0; i < rescaled_chunk_mat.rows * rescaled_chunk_mat.cols; i++)
+    {
+        if (rescaled_chunk_mat.data[i] == 254)
+            rescaled_chunk_->data[i] = 0;
+        else if (rescaled_chunk_mat.data[i] == 0)
+            rescaled_chunk_->data[i] = 100;
+        else
+            rescaled_chunk_->data[i] = -1;
+    }
+
+    const double cos_heading_window = cos(car_state_->heading);
+    const double sin_heading_window = sin(car_state_->heading);
+    const int car_x_rescaled = static_cast<int>((car_state_->x - rescaled_chunk_->info.origin.position.x) /
+                                                rescaled_chunk_->info.resolution);
+    const int car_y_rescaled = static_cast<int>((car_state_->y - rescaled_chunk_->info.origin.position.y) /
+                                                rescaled_chunk_->info.resolution);
+    const double half_size_meters = square_size_m_ / 2.0;
+
     std::vector<cv::Point> window_polygon;
-    buildWindowMask(window_mask, window_polygon);
+    window_polygon.reserve(4);
+    const std::vector<std::pair<double, double>> corners = {
+        {-half_size_meters, -half_size_meters},
+        {half_size_meters, -half_size_meters},
+        {half_size_meters, half_size_meters},
+        {-half_size_meters, half_size_meters}
+    };
 
-    // 4) Seed the dynamic obstacle grid: -1 (unknown) everywhere, free (0) inside the window.
+    for (const auto &corner : corners) {
+        const double rotated_x = corner.first * cos_heading_window - corner.second * sin_heading_window;
+        const double rotated_y = corner.first * sin_heading_window + corner.second * cos_heading_window;
+
+        const int grid_x =
+            car_x_rescaled + static_cast<int>(std::round(rotated_x / rescaled_chunk_->info.resolution));
+        const int grid_y =
+            car_y_rescaled + static_cast<int>(std::round(rotated_y / rescaled_chunk_->info.resolution));
+        window_polygon.emplace_back(grid_x, grid_y);
+    }
+
+    cv::Mat window_mask(rescaled_chunk_->info.height, rescaled_chunk_->info.width, CV_8UC1, cv::Scalar(0));
+    cv::fillConvexPoly(window_mask, window_polygon, cv::Scalar(255));
+
     nav_msgs::msg::OccupancyGrid dynamic_obstacle_grid = *rescaled_chunk_;
     dynamic_obstacle_grid.header.stamp = current_stamp;
-    dynamic_obstacle_grid.data.assign(
-        static_cast<size_t>(dynamic_obstacle_grid.info.width) * dynamic_obstacle_grid.info.height, -1);
-    for (int y = 0; y < window_mask.rows; ++y) {
-        for (int x = 0; x < window_mask.cols; ++x) {
-            if (window_mask.at<uint8_t>(y, x) != 0) {
+    dynamic_obstacle_grid.data.assign(dynamic_obstacle_grid.info.width * dynamic_obstacle_grid.info.height, -1);
+    for (int y = 0; y < window_mask.rows; ++y)
+    {
+        for (int x = 0; x < window_mask.cols; ++x)
+        {
+            if (window_mask.at<uint8_t>(y, x) != 0)
+            {
                 dynamic_obstacle_grid.data[y * dynamic_obstacle_grid.info.width + x] = 0;
             }
         }
     }
 
-    // 5) Carry the static base map forward; dynamic obstacles will be stamped on top
-    //    of dynamic_global_obstacle_grid (global_map_ itself stays as the static base).
     nav_msgs::msg::OccupancyGrid dynamic_global_obstacle_grid = *global_map_;
     dynamic_global_obstacle_grid.header.stamp = current_stamp;
 
-    // 6) Inflation radius: prefer meter-based parameter; convert to cells using the
-    //    *corrected* rescaled resolution so behavior is resolution-stable.
-    const int inflation_radius = computeInflationCells();
-    constexpr int value_to_mark = 100;
+    auto mark_grid = [&](int x, int y, int value)
+    {
+        if (x >= 0 && x < static_cast<int>(rescaled_chunk_->info.width) &&
+            y >= 0 && y < static_cast<int>(rescaled_chunk_->info.height) &&
+            window_mask.at<uint8_t>(y, x) != 0)
+        {
+            rescaled_chunk_->data[y * rescaled_chunk_->info.width + x] = value; // Mark the cell
+            dynamic_obstacle_grid.data[y * dynamic_obstacle_grid.info.width + x] = value;
 
-    RCLCPP_DEBUG(this->get_logger(),
-        "Inflation: meters=%.4f -> cells=%d (rescaled_res=%.4fm)",
-        obstacle_inflation_radius_m_, inflation_radius,
-        static_cast<double>(rescaled_chunk_->info.resolution));
+            const double world_x =
+                rescaled_chunk_->info.origin.position.x + (static_cast<double>(x) + 0.5) * rescaled_chunk_->info.resolution;
+            const double world_y =
+                rescaled_chunk_->info.origin.position.y + (static_cast<double>(y) + 0.5) * rescaled_chunk_->info.resolution;
 
-    // Stamp value at (x,y) in the local chunk and project to the dynamic global grid.
-    auto mark_grid = [&](int x, int y, int value) {
-        if (!isInsideGrid(x, y, rescaled_chunk_->info)) {
-            return;
-        }
-        if (window_mask.at<uint8_t>(y, x) == 0) {
-            return;
-        }
-        rescaled_chunk_->data[y * rescaled_chunk_->info.width + x] = value;
-        dynamic_obstacle_grid.data[y * dynamic_obstacle_grid.info.width + x] = value;
+            const int global_x = static_cast<int>(std::floor(
+                (world_x - dynamic_global_obstacle_grid.info.origin.position.x) /
+                dynamic_global_obstacle_grid.info.resolution));
+            const int global_y = static_cast<int>(std::floor(
+                (world_y - dynamic_global_obstacle_grid.info.origin.position.y) /
+                dynamic_global_obstacle_grid.info.resolution));
 
-        const double world_x =
-            rescaled_chunk_->info.origin.position.x +
-            (static_cast<double>(x) + 0.5) * rescaled_chunk_->info.resolution;
-        const double world_y =
-            rescaled_chunk_->info.origin.position.y +
-            (static_cast<double>(y) + 0.5) * rescaled_chunk_->info.resolution;
-
-        int gx = 0, gy = 0;
-        worldToGrid(world_x, world_y, dynamic_global_obstacle_grid.info, gx, gy);
-        if (isInsideGrid(gx, gy, dynamic_global_obstacle_grid.info)) {
-            dynamic_global_obstacle_grid
-                .data[gy * dynamic_global_obstacle_grid.info.width + gx] = value;
+            if (global_x >= 0 && global_x < static_cast<int>(dynamic_global_obstacle_grid.info.width) &&
+                global_y >= 0 && global_y < static_cast<int>(dynamic_global_obstacle_grid.info.height))
+            {
+                dynamic_global_obstacle_grid
+                    .data[global_y * dynamic_global_obstacle_grid.info.width + global_x] = value;
+            }
         }
     };
 
-    auto inflate_point = [&](int x, int y, int radius, int value) {
-        if (radius <= 0) {
-            mark_grid(x, y, value);
-            return;
-        }
-        const int r2 = radius * radius;
-        for (int dx = -radius; dx <= radius; ++dx) {
-            for (int dy = -radius; dy <= radius; ++dy) {
-                if (dx * dx + dy * dy <= r2) {
+    auto inflate_point = [&](int x, int y, int radius, int value)
+    {
+        for (int dx = -radius; dx <= radius; ++dx)
+        {
+            for (int dy = -radius; dy <= radius; ++dy)
+            {
+                if (dx * dx + dy * dy <= radius * radius)
+                { // Circle equation
                     mark_grid(x + dx, y + dy, value);
                 }
             }
         }
     };
 
-    auto draw_inflated_line = [&](int x0, int y0, int x1, int y1, int radius, int value) {
-        int dx = std::abs(x1 - x0);
-        int dy = std::abs(y1 - y0);
+    auto draw_inflated_line = [&](int x0, int y0, int x1, int y1, int radius, int value)
+    {
+        int dx = abs(x1 - x0), dy = abs(y1 - y0);
         int n = 1 + dx + dy;
-        const int x_inc = (x1 > x0) ? 1 : -1;
-        const int y_inc = (y1 > y0) ? 1 : -1;
+        int x_inc = (x1 > x0) ? 1 : -1;
+        int y_inc = (y1 > y0) ? 1 : -1;
         int error = dx - dy;
         dx *= 2;
         dy *= 2;
 
-        for (; n > 0; --n) {
+        for (; n > 0; --n)
+        {
             inflate_point(x0, y0, radius, value);
-            if (error > 0) {
+
+            if (error > 0)
+            {
                 x0 += x_inc;
                 error -= dy;
-            } else {
+            }
+            else
+            {
                 y0 += y_inc;
                 error += dx;
             }
         }
     };
 
-    const std::string map_frame = dynamic_global_obstacle_grid.header.frame_id.empty()
-        ? global_planner_frame_id_
-        : dynamic_global_obstacle_grid.header.frame_id;
-    geometry_msgs::msg::TransformStamped obstacle_to_map_tf;
-    if (!msg->obstacles.empty()) {
-        if (msg->header.frame_id.empty()) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                "Skipping map_combination: obstacle collection has an empty frame_id.");
-            return;
-        }
-        try {
-            obstacle_to_map_tf = tf2_buffer.lookupTransform(
-                map_frame, msg->header.frame_id, rclcpp::Time(msg->header.stamp));
-        }
-        catch (tf2::TransformException &ex) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                "Skipping map_combination: transform error (%s <- %s): %s",
-                map_frame.c_str(), msg->header.frame_id.c_str(), ex.what());
-            return;
-        }
-    }
+    const int inflation_radius = obstacle_inflation_radius_cells_;
+    int value_to_mark = 100;
 
-    // Even-odd ray-casting test. Returns false for degenerate polygons.
-    auto point_in_polygon = [](int x, int y, const std::vector<std::pair<int, int>> &polygon) -> bool {
-        if (polygon.size() < 3) {
-            return false;
-        }
+    // Transformation from lidar frame to map frame
+    double cos_heading = cos(car_state_->heading);
+    double sin_heading = sin(car_state_->heading);
+
+    // Function to check if a point is inside a polygon using ray casting algorithm
+    auto point_in_polygon = [&](int x, int y, const std::vector<std::pair<int, int>>& polygon) -> bool
+    {
         bool inside = false;
-        int j = static_cast<int>(polygon.size()) - 1;
-        for (int i = 0; i < static_cast<int>(polygon.size()); i++) {
-            const auto &pi = polygon[i];
-            const auto &pj = polygon[j];
-            // The strict inequality on y guards against div-by-zero when
-            // both endpoints share the scan-line; collinear edges are ignored.
-            if (((pi.second > y) != (pj.second > y)) &&
-                (x < (pj.first - pi.first) * (y - pi.second) /
-                     (pj.second - pi.second) + pi.first)) {
+        int j = polygon.size() - 1;
+        
+        for (int i = 0; i < static_cast<int>(polygon.size()); i++)
+        {
+            if (((polygon[i].second > y) != (polygon[j].second > y)) &&
+                (x < (polygon[j].first - polygon[i].first) * (y - polygon[i].second) / 
+                 (polygon[j].second - polygon[i].second) + polygon[i].first))
+            {
                 inside = !inside;
             }
             j = i;
@@ -828,72 +717,84 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
         return inside;
     };
 
-    auto fill_obstacle_interior = [&](const std::vector<std::pair<int, int>> &polygon_vertices,
-                                       int fill_value) {
-        if (polygon_vertices.size() < 3) {
-            return;
-        }
+    // Function to fill obstacle interiors with dark grid
+    auto fill_obstacle_interior = [&](const std::vector<std::pair<int, int>>& polygon_vertices, int fill_value)
+    {
+        if (polygon_vertices.size() < 3) return; // Need at least 3 points for a polygon
+        
+        // Find bounding box of the polygon
         int min_x = polygon_vertices[0].first, max_x = polygon_vertices[0].first;
         int min_y = polygon_vertices[0].second, max_y = polygon_vertices[0].second;
-        for (const auto &v : polygon_vertices) {
-            min_x = std::min(min_x, v.first);
-            max_x = std::max(max_x, v.first);
-            min_y = std::min(min_y, v.second);
-            max_y = std::max(max_y, v.second);
+        
+        for (const auto& vertex : polygon_vertices)
+        {
+            min_x = std::min(min_x, vertex.first);
+            max_x = std::max(max_x, vertex.first);
+            min_y = std::min(min_y, vertex.second);
+            max_y = std::max(max_y, vertex.second);
         }
-        if (max_x == min_x && max_y == min_y) {
-            return; // degenerate single-point polygon
-        }
+        
+        // Clamp to grid boundaries
         min_x = std::max(0, min_x);
         max_x = std::min(static_cast<int>(rescaled_chunk_->info.width) - 1, max_x);
         min_y = std::max(0, min_y);
         max_y = std::min(static_cast<int>(rescaled_chunk_->info.height) - 1, max_y);
-
-        for (int y = min_y; y <= max_y; ++y) {
-            for (int x = min_x; x <= max_x; ++x) {
-                if (point_in_polygon(x, y, polygon_vertices)) {
+        
+        // Fill all points inside the polygon
+        for (int y = min_y; y <= max_y; ++y)
+        {
+            for (int x = min_x; x <= max_x; ++x)
+            {
+                if (point_in_polygon(x, y, polygon_vertices))
+                {
                     mark_grid(x, y, fill_value);
                 }
             }
         }
     };
 
-    for (const auto &obstacle : msg->obstacles) {
-        geometry_msgs::msg::Polygon map_polygon;
-        tf2::doTransform(obstacle.polygon, map_polygon, obstacle_to_map_tf);
-        const auto &pts = map_polygon.points;
-        if (pts.size() < 3) {
-            RCLCPP_DEBUG(this->get_logger(),
-                "Skipping obstacle %u with degenerate polygon (%zu points)",
-                obstacle.id, pts.size());
-            continue;
-        }
-
+    for (size_t i = 0; i < msg->obstacles.size(); ++i)
+    {
+        const auto &obstacle = msg->obstacles[i];
+        
+        // Store polygon vertices in grid coordinates for filling
         std::vector<std::pair<int, int>> polygon_vertices;
-        polygon_vertices.reserve(pts.size());
+        
+        for (size_t j = 0; j < obstacle.polygon.points.size(); ++j)
+        {
+            auto &current_point_lidar = obstacle.polygon.points[j];
+            auto &next_point_lidar = obstacle.polygon.points[(j + 1) % obstacle.polygon.points.size()];
 
-        for (size_t j = 0; j < pts.size(); ++j) {
-            const auto &current_point_map = pts[j];
-            const auto &next_point_map = pts[(j + 1) % pts.size()];
+            geometry_msgs::msg::Point current_point_map;
+            current_point_map.x = car_state_->x + cos_heading * current_point_lidar.x - sin_heading * current_point_lidar.y;
+            current_point_map.y = car_state_->y + sin_heading * current_point_lidar.x + cos_heading * current_point_lidar.y;
+            geometry_msgs::msg::Point next_point_map;
+            next_point_map.x = car_state_->x + cos_heading * next_point_lidar.x - sin_heading * next_point_lidar.y;
+            next_point_map.y = car_state_->y + sin_heading * next_point_lidar.x + cos_heading * next_point_lidar.y;
 
-            int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-            worldToGrid(current_point_map.x, current_point_map.y, rescaled_chunk_->info, x0, y0);
-            worldToGrid(next_point_map.x, next_point_map.y, rescaled_chunk_->info, x1, y1);
+            int x0 = static_cast<int>((current_point_map.x - rescaled_chunk_->info.origin.position.x) / rescaled_chunk_->info.resolution);
+            int y0 = static_cast<int>((current_point_map.y - rescaled_chunk_->info.origin.position.y) / rescaled_chunk_->info.resolution);
+            int x1 = static_cast<int>((next_point_map.x - rescaled_chunk_->info.origin.position.x) / rescaled_chunk_->info.resolution);
+            int y1 = static_cast<int>((next_point_map.y - rescaled_chunk_->info.origin.position.y) / rescaled_chunk_->info.resolution);
 
-            polygon_vertices.emplace_back(x0, y0);
+            // Store vertex for polygon filling
+            polygon_vertices.push_back({x0, y0});
+
+            // Draw inflated boundary
             draw_inflated_line(x0, y0, x1, y1, inflation_radius, value_to_mark);
         }
-
+        
+        // Fill the interior of the obstacle with dark grid (value 100)
         fill_obstacle_interior(polygon_vertices, value_to_mark);
     }
 
-    // Crop the published dynamic obstacle grid to the window bounding rectangle.
     nav_msgs::msg::OccupancyGrid published_dynamic_obstacle_grid = dynamic_obstacle_grid;
     cv::Rect window_bounds = cv::boundingRect(window_polygon);
     window_bounds &= cv::Rect(0, 0,
                               static_cast<int>(dynamic_obstacle_grid.info.width),
                               static_cast<int>(dynamic_obstacle_grid.info.height));
-    if (window_bounds.width > 0 && window_bounds.height > 0) {
+    if (window_bounds.width > 0 && window_bounds.height > 0)
+    {
         published_dynamic_obstacle_grid.info.width = static_cast<uint32_t>(window_bounds.width);
         published_dynamic_obstacle_grid.info.height = static_cast<uint32_t>(window_bounds.height);
         published_dynamic_obstacle_grid.info.origin.position.x +=
@@ -901,11 +802,12 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
         published_dynamic_obstacle_grid.info.origin.position.y +=
             static_cast<double>(window_bounds.y) * dynamic_obstacle_grid.info.resolution;
         published_dynamic_obstacle_grid.data.assign(
-            static_cast<size_t>(published_dynamic_obstacle_grid.info.width) *
-                published_dynamic_obstacle_grid.info.height, -1);
+            published_dynamic_obstacle_grid.info.width * published_dynamic_obstacle_grid.info.height, -1);
 
-        for (int y = 0; y < window_bounds.height; ++y) {
-            for (int x = 0; x < window_bounds.width; ++x) {
+        for (int y = 0; y < window_bounds.height; ++y)
+        {
+            for (int x = 0; x < window_bounds.width; ++x)
+            {
                 const int src_x = window_bounds.x + x;
                 const int src_y = window_bounds.y + y;
                 published_dynamic_obstacle_grid.data[
@@ -924,22 +826,31 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
     occupancy_grid_pub_test_->publish(published_dynamic_obstacle_grid);
     global_planner_occupancy_grid_publisher_->publish(global_planner_occupancy_grid_);
 
-    TreeFlat flat_map;
-    const int best_map = generateTrajectoryTree_AStar_flat_map_with_waypoints(*car_state_, flat_map);
-    publishBestPathFromFlat(flat_map, best_map, 2);
-    publishAllPathsFromFlat(flat_map);
-    publishTrajectoryPath(flat_map, best_map);
+    // TreeFlat flat;
+    // int best = generateTrajectoryTree_AStar_flat_map(*car_state_, flat);
+    // publishBestPathFromFlat(flat, best, 1); // green color for the flat implementation
 
-    const auto end_time = std::chrono::system_clock::now();
-    const auto duration_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end_time - init_time).count();
-    RCLCPP_DEBUG(this->get_logger(), "Execution time for path selection: %ld ms", duration_ms);
+    TreeFlat flat_map;
+    int best_map = generateTrajectoryTree_AStar_flat_map_with_waypoints(*car_state_, flat_map);
+    publishBestPathFromFlat(flat_map, best_map, 2); // blue color for the A* implementation with waypoints
+    publishAllPathsFromFlat(flat_map); // publish all available paths
+    publishTrajectoryPath(flat_map, best_map); // publish chosen trajectory as nav_msgs::Path
+
+
+    auto end_time = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - init_time).count();
+    cout << blue << "Execution time for path selection: " << duration << " ms" << reset << endl;
 }
 
   
 // =============================
 // generate the trajectory based on the A* algorithm
 // =============================
+int path_planning::generateTrajectoryTree_AStar_flat_map(const State& root_state, TreeFlat& out)
+{
+    return generateTrajectoryTreeImpl(root_state, out, false);
+}
+
 int path_planning::generateTrajectoryTree_AStar_flat_map_with_waypoints(const State& root_state, TreeFlat& out)
 {
     return generateTrajectoryTreeImpl(root_state, out, true);
@@ -949,27 +860,6 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
 {
     out.nodes.clear();
     out.leaves.clear();
-
-    if (!grid_map_) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Skipping A* expansion: grid_map_ is null (no obstacle update received yet).");
-        return -1;
-    }
-    if (!kinematic_model_) {
-        RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Skipping A* expansion: kinematic_model_ is null.");
-        return -1;
-    }
-    if (motion_primitives_.empty()) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Skipping A* expansion: motion_primitives_ is empty.");
-        return -1;
-    }
-    if (pathLength <= 0) {
-        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "Skipping A* expansion: pathLength <= 0 (got %d).", pathLength);
-        return -1;
-    }
 
     const int B = std::max(1, static_cast<int>(motion_primitives_.size()));
     const int D = std::max(0, tree_depth);
@@ -1058,7 +948,7 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
             ns.gridx = std::get<0>(cell);
             ns.gridy = std::get<1>(cell);
 
-            if (grid_map_->isSingleStateInCollisionImproved(ns)) {
+            if (grid_map_->isSingleStateCollisionFreeImproved(ns)) {
               return -1;
             }
 
@@ -1280,9 +1170,8 @@ void path_planning::buildWaypointDistanceFields()
     cv::Mat bin2(H, W, CV_8UC1, cv::Scalar(0));
 
     auto worldToGrid = [&](double x, double y, int& gx, int& gy) {
-        // Floor (not truncate) so negative offsets land in the correct cell.
-        gx = static_cast<int>(std::floor((x - rescaled_chunk_->info.origin.position.x) / res));
-        gy = static_cast<int>(std::floor((y - rescaled_chunk_->info.origin.position.y) / res));
+        gx = static_cast<int>((x - rescaled_chunk_->info.origin.position.x) / res);
+        gy = static_cast<int>((y - rescaled_chunk_->info.origin.position.y) / res);
     };
 
     // Helper to draw a thick line in grid space

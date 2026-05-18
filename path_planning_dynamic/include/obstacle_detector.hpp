@@ -1,56 +1,75 @@
 #pragma once
 
-#include <pcl/common/common.h>
-#include <pcl/common/pca.h>
-#include <pcl/common/transforms.h>
-#include <pcl/filters/extract_indices.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/kdtree/kdtree.h>
-#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/point_cloud.h>
+#include <pcl/search/kdtree.h>
 #include <pcl/segmentation/extract_clusters.h>
-#include <pcl/common/centroid.h>
 
-#include <algorithm>
-#include <ctime>
 #include <iostream>
-#include <string>
-#include <unordered_set>
-#include <utility>
+#include <memory>
 #include <vector>
 
 namespace lidar_obstacle_detector
 {
+    /**
+     * @brief Euclidean point-cloud cluster extractor for obstacle detection.
+     *
+     * Groups nearby points from a PCL point cloud into independent clusters that
+     * can later be converted into obstacle polygons.
+     *
+     * @tparam PointT PCL point type used by the input cloud, such as pcl::PointXYZ.
+     * @return --
+     * @note The point type must be supported by PCL KdTree and EuclideanClusterExtraction.
+     */
     template <typename PointT>
     class ObstacleDetector
     {
     public:
-        ObstacleDetector();
-        virtual ~ObstacleDetector();
+        /**
+         * @brief Create an obstacle detector.
+         *
+         * Initializes the detector without owning any point-cloud data.
+         *
+         * @return --
+         * @note All clustering parameters are provided per clustering() call.
+         */
+        ObstacleDetector() = default;
 
-        // Clustering function
-        std::pair<std::vector<typename pcl::PointCloud<PointT>::Ptr>, std::vector<PointT>>
+        /**
+         * @brief Destroy the obstacle detector.
+         *
+         * Uses the default destructor because the detector does not own external resources.
+         *
+         * @return --
+         * @note Point clouds created during clustering are returned through shared pointers.
+         */
+        virtual ~ObstacleDetector() = default;
+
+        /**
+         * @brief Split a point cloud into Euclidean clusters.
+         *
+         * Builds a KdTree for the input cloud, runs PCL EuclideanClusterExtraction
+         * and copies each detected cluster into its own point cloud.
+         *
+         * @param cloud Input point cloud to cluster.
+         * @param cluster_tolerance Maximum distance between neighboring points in the same cluster.
+         * @param min_size Minimum number of points required for a valid cluster.
+         * @param max_size Maximum number of points allowed for a valid cluster.
+         * @return Vector of point-cloud clusters detected in the input cloud.
+         * @note Returns an empty vector if the input cloud pointer is null.
+         */
+        std::vector<typename pcl::PointCloud<PointT>::Ptr>
         clustering(const typename pcl::PointCloud<PointT>::ConstPtr &cloud, const float cluster_tolerance, const int min_size, const int max_size);
 
     private:
     };
 
-    // constructor:
     template <typename PointT>
-    ObstacleDetector<PointT>::ObstacleDetector() {}
-
-    // de-constructor:
-    template <typename PointT>
-    ObstacleDetector<PointT>::~ObstacleDetector() {}
-
-    template <typename PointT>
-    std::pair<std::vector<typename pcl::PointCloud<PointT>::Ptr>, std::vector<PointT>>
+    std::vector<typename pcl::PointCloud<PointT>::Ptr>
     ObstacleDetector<PointT>::clustering(const typename pcl::PointCloud<PointT>::ConstPtr &cloud, const float cluster_tolerance, const int min_size, const int max_size)
     {
-        // Time clustering process
-        // const auto start_time = std::chrono::steady_clock::now();
         if (!cloud) {
             std::cout << "[clustering] ⚠ Nube recibida es NULL\n";
+            return {};
         } else {
             std::cout << "[clustering] Nube recibida con " << cloud->size() << " puntos\n";
         }
@@ -58,10 +77,9 @@ namespace lidar_obstacle_detector
 
         std::vector<typename pcl::PointCloud<PointT>::Ptr> clusters;
 
-        std::vector<PointT> centroids;
-
         // Perform euclidean clustering to group detected obstacles
-        typename pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>);
+        typename pcl::search::KdTree<PointT>::Ptr tree =
+            std::make_shared<pcl::search::KdTree<PointT>>();
 
         tree->setInputCloud(cloud);
 
@@ -74,9 +92,12 @@ namespace lidar_obstacle_detector
         ec.setInputCloud(cloud);
         ec.extract(cluster_indices);
 
+        clusters.reserve(cluster_indices.size());
         for (const auto &indices : cluster_indices)
         {
-            typename pcl::PointCloud<PointT>::Ptr cluster(new pcl::PointCloud<PointT>);
+            typename pcl::PointCloud<PointT>::Ptr cluster =
+                std::make_shared<pcl::PointCloud<PointT>>();
+            cluster->points.reserve(indices.indices.size());
             for (int index : indices.indices)
                 cluster->points.push_back(cloud->points[index]);
 
@@ -86,17 +107,9 @@ namespace lidar_obstacle_detector
             clusters.push_back(cluster);
             std::cout << "CLuster Points:" << cluster->points.size() << " puntos\n";
 
-            // Eigen::Vector4f centroid;
-            // pcl::compute3DCentroid(*cluster, centroid);
-
-            // PointT centroid_point;
-            // centroid_point.x = centroid[0];
-            // centroid_point.y = centroid[1];
-            // centroid_point.z = centroid[2];
-            // centroids.push_back(centroid_point);
         }
 
-        return {clusters, centroids};
+        return clusters;
     }
 
 }

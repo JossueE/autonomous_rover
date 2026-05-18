@@ -5,7 +5,10 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <geometry_msgs/msg/point.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <std_msgs/msg/int32.hpp>
+#include <std_msgs/msg/bool.hpp>
 
 // path nav msgs
 #include <nav_msgs/msg/path.hpp>
@@ -16,31 +19,39 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
-// Custom msgs path_planning_dynamic for ObstacleCollection
+// Custom msgs path_planning_dynamic for Obstacle and ObstacleCollection
+#include "path_planning_dynamic/msg/obstacle.hpp"
 #include "path_planning_dynamic/msg/obstacle_collection.hpp"
+
+// Custom msgs path_planning_dynamic for RoadElements and RoadElementsCollection
+#include "path_planning_dynamic/msg/road_elements.hpp"
+#include "path_planning_dynamic/msg/road_elements_collection.hpp"
+
+// STA collision checker
+#include "sat_collision_checker.h"
 
 // Kinematics and vehicle geometry
 #include "kinematic_models.hpp"
 #include "vehicle_footprint.hpp"
 
 // State
-#include "state.hpp"
+#include "State.h"
 
 // Grid map
-#include "grid_map.hpp"
+#include "Grid_map.h"
 
 // Global Planner
-#include "global_planner.hpp"
+#include "GlobalPlanner.hpp"
 
 // C++
+#include <iostream>
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <queue>
-#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // FlatNode and TreeFlat for the flat tree
@@ -112,9 +123,19 @@ static inline int heading_bin(double theta) {
 class path_planning : public rclcpp::Node
 {
 private:
+    // colors for the terminal
+    std::string green = "\033[1;32m";
+    std::string red = "\033[1;31m";
+    std::string blue = "\033[1;34m";
+    std::string yellow = "\033[1;33m";
+    std::string purple = "\033[1;35m";
+    std::string reset = "\033[0m";
+
     // tf2 buffer & listener
     tf2_ros::Buffer tf2_buffer;
     tf2_ros::TransformListener tf2_listener;
+
+    fop::SATCollisionChecker collision_checker; // Collision checker
 
     // vehicle geometry and kinematics
     VehicleFootprint vehicle_footprint_;
@@ -137,9 +158,6 @@ private:
 
     // State
     std::shared_ptr<State> car_state_;
-    bool car_state_valid_ = false;
-    std::string pose_frame_;
-    double z_offset_;
 
     // global map and rescaled chunk 
     std::shared_ptr<nav_msgs::msg::OccupancyGrid> global_map_;
@@ -155,6 +173,7 @@ private:
     std::string map_path_;
     double x_offset_;
     double y_offset_;
+    double z_offset_ = 0.0;
     int start_lanelet_id_;
     int end_lanelet_id_;
 
@@ -170,34 +189,15 @@ private:
     // subscription for the obstacle information
     rclcpp::Subscription<path_planning_dynamic::msg::ObstacleCollection>::SharedPtr obstacle_info_subscription_;
     void obstacle_info_callback(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg);
-
-    // Local chunk geometry. Defaults preserved for backward compatibility, but
-    // each is exposed via parameters (planner.forward_distance,
-    // planner.chunk_radius_cells, planner.scale_factor).
+    // offset for the origin of the map chunk
     double forward_distance = 7.0;
     int chunk_size = 100;
-    int chunk_radius = 50;
-    // scale_factor > 1.0 -> rescaled chunk has more cells, smaller resolution;
-    // scale_factor < 1.0 -> rescaled chunk has fewer cells, larger resolution.
-    double scale_factor = 1.0;
-
+    int chunk_radius = chunk_size / 2;
+    double scale_factor = 1; // if the map resolution is 1.0 is a scale factor of 5 and if the map resolution is 0.2 the salce resultion shoudl be 1.
+    bool car_state_valid_ = false;
     void map_combination(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg);
     cv::Mat toMat(const nav_msgs::msg::OccupancyGrid &map);
     cv::Mat rescaleChunk(const cv::Mat &chunk_mat, double scale_factor);
-
-    // ----- map_combination helpers (preserve current behavior, factor out duplication) -----
-    static void worldToGrid(double wx, double wy,
-                            const nav_msgs::msg::MapMetaData &info,
-                            int &gx, int &gy);
-    static bool isInsideGrid(int gx, int gy,
-                             const nav_msgs::msg::MapMetaData &info);
-    bool validateScaleFactor(double sf) const;
-    bool extractChunkAroundRobot(nav_msgs::msg::OccupancyGrid &chunk) const;
-    bool rescaleOccupancyGridChunk(const nav_msgs::msg::OccupancyGrid &chunk);
-    void buildWindowMask(cv::Mat &window_mask,
-                         std::vector<cv::Point> &window_polygon) const;
-    int computeInflationCells() const;
-
     // publisher for the occupancy grid 
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_test_;
     
@@ -230,11 +230,7 @@ private:
     cv::Mat dist_m_; // distance matrix for the A* algorithm
 
     double SAFE_CLEAR = 0.2;    // meters: half vehicle width + margin
-    // Legacy cell-based obstacle inflation. Kept for backward compatibility.
-    int obstacle_inflation_radius_cells_ = 1;
-    // Modern meter-based obstacle inflation. When > 0 it overrides the cell
-    // value; converted to cells using the current rescaled chunk resolution.
-    double obstacle_inflation_radius_m_ = 0.0;
+    int obstacle_inflation_radius_cells_ = 1; // inflated cells around detected obstacles
     double W_OBS      = 1.2;    // weight for clearance penalty
     double W_DSTEER   = 0.05;   // weight for smoothness (|Δsteer|)
 
@@ -247,6 +243,7 @@ private:
     void publishTrajectoryPath(const TreeFlat& flat, int leaf_idx);
 
     // generate the trajectory based on the flat tree on the A* algorithm
+    int generateTrajectoryTree_AStar_flat_map(const State& root_state, TreeFlat& out);
     int generateTrajectoryTree_AStar_flat_map_with_waypoints(const State& root_state, TreeFlat& out);
     int generateTrajectoryTreeImpl(const State& root_state, TreeFlat& out, bool use_waypoints);
 
@@ -270,6 +267,7 @@ private:
     int global_planner_close_radius_ = 1;
     int global_planner_close_iters_ = 1;
     int global_planner_outside_value_;
+    std::string pose_frame_;
     std::string global_planner_frame_id_;
     std::string global_planner_occupancy_output_topic_;
     nav_msgs::msg::OccupancyGrid global_planner_occupancy_grid_;
