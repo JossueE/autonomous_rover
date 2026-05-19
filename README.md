@@ -177,3 +177,9 @@ ros2 launch path_planning_dynamic planning.launch.py
 ros2 run robot_core teleop_keyboard.py --ros-args -r cmd_vel:=/cmd_vel_safe
 
 ros2 launch nmpc_controller sim_nmpc.launch.py costmap_topic:=/occupancy_grid_obstacles
+
+
+
+# Don not use
+rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
+pcl_ply2pcd -format 1 /tmp/rtabmap_cloud_cloud.ply ~/.ros/rtabmap_cloud_binary.pcd

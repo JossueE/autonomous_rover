@@ -154,10 +154,10 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
         return;
     }
 
-    auto input_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    auto input_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     pcl::fromROSMsg(*msg, *input_cloud);
 
-    auto transformed_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    auto transformed_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     pcl::transformPointCloud(*input_cloud, *transformed_cloud, rotation_matrix_);
 
     // Remove robot's own footprint points from the pointcloud
@@ -170,28 +170,28 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     pub_->publish(ground_msg);
 
     // Apply ROI filtering
-    pcl::CropBox<pcl::PointXYZI> roi_filter;
+    pcl::CropBox<pcl::PointXYZ> roi_filter;
     roi_filter.setInputCloud(transformed_cloud);
     roi_filter.setMax(ROI_MAX_POINT);
     roi_filter.setMin(ROI_MIN_POINT);
 
-    auto cloud_roi = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    auto cloud_roi = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     roi_filter.filter(*cloud_roi);
 
     if (voxel_condition)
     {
         // create voxel grid object
-        pcl::VoxelGrid<pcl::PointXYZI> vg;
+        pcl::VoxelGrid<pcl::PointXYZ> vg;
         vg.setInputCloud(cloud_roi);
         vg.setLeafSize(voxel_leaf_size_x_, voxel_leaf_size_y_, voxel_leaf_size_z_);
-        auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+        auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         vg.filter(*filtered_cloud);
 
         // Separate ground and non-ground points
-        auto notground_points = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+        auto notground_points = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         notground_points->points.reserve(filtered_cloud->points.size());
 
-        auto seed_points = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+        auto seed_points = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         seed_points->clear();
         extractInitialSeeds(filtered_cloud, seed_points);
 
@@ -232,7 +232,7 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     pub_marker_->publish(robot_marker);
 }
 
-pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCloud<pcl::PointXYZI> &seed_points)
+pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCloud<pcl::PointXYZ> &seed_points)
 {
     Eigen::Matrix3f cov_matrix;
     Eigen::Vector4f centroid;
@@ -246,14 +246,14 @@ pointcloud_roi_node::Model pointcloud_roi_node::estimatePlane(const pcl::PointCl
     return model;
 }
 
-void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZI>::Ptr &seed_points)
+void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZ>::Ptr &seed_points)
 {
     // Step 1: Partition the cloud based on z value
-    auto partition_point = std::partition(cloud_in->points.begin(), cloud_in->points.end(), [&](const pcl::PointXYZI &point)
+    auto partition_point = std::partition(cloud_in->points.begin(), cloud_in->points.end(), [&](const pcl::PointXYZ &point)
                                           { return point.z < -1.5 * sensor_height_; });
 
     // Step 2: The "above threshold" points are now in [partition_point, cloud_in->points.end()]
-    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     filtered_cloud->points.assign(partition_point, cloud_in->points.end());
 
     // Step 3: Compute the LPR height by averaging the first 'num_lpr_' points in the filtered cloud
@@ -325,10 +325,10 @@ visualization_msgs::msg::Marker pointcloud_roi_node::createRobotFootprintMarker(
     return marker;
 }
 
-void pointcloud_roi_node::removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud)
+void pointcloud_roi_node::removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
 {
     // Create a new pointcloud to store points outside the robot footprint
-    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     filtered_cloud->points.reserve(cloud->points.size());
     
     // Filter out points that fall within the robot's 3D bounding box

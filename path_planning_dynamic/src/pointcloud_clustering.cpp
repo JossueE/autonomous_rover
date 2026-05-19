@@ -2,11 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <Eigen/Dense>
 #include <geometry_msgs/msg/point32.hpp>
 #include <geometry_msgs/msg/polygon.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/surface/concave_hull.h>
 #include <pcl/surface/convex_hull.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/exceptions.h>
 
 #include "path_planning_dynamic/msg/obstacle.hpp"
 
@@ -35,6 +41,28 @@ std::string normalizeHullMode(std::string mode)
     std::transform(mode.begin(), mode.end(), mode.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return mode;
+}
+
+Eigen::Matrix4f transformToMatrix(const geometry_msgs::msg::TransformStamped &transform)
+{
+    const auto &translation = transform.transform.translation;
+    const auto &rotation = transform.transform.rotation;
+
+    tf2::Quaternion quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+    tf2::Matrix3x3 rotation_matrix(quaternion);
+
+    Eigen::Matrix4f matrix = Eigen::Matrix4f::Identity();
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int col = 0; col < 3; ++col)
+        {
+            matrix(row, col) = static_cast<float>(rotation_matrix[row][col]);
+        }
+    }
+    matrix(0, 3) = static_cast<float>(translation.x);
+    matrix(1, 3) = static_cast<float>(translation.y);
+    matrix(2, 3) = static_cast<float>(translation.z);
+    return matrix;
 }
 
 /**
@@ -72,7 +100,10 @@ bool buildClosedPolygonFromHull(const pcl::PointCloud<pcl::PointXYZ>::Ptr &hull_
 }
 } // namespace
 
-pointcloud_clustering_node::pointcloud_clustering_node() : Node("pointcloud_clustering_node")
+pointcloud_clustering_node::pointcloud_clustering_node()
+    : Node("pointcloud_clustering_node"),
+      tf2_buffer_(this->get_clock()),
+      tf2_listener_(tf2_buffer_)
 {
     this->declare_parameter("CLUSTER_THRESH", 0.0);
     this->declare_parameter("CLUSTER_MAX_SIZE", 0);
@@ -129,9 +160,15 @@ void pointcloud_clustering_node::pointCloudCallback(const sensor_msgs::msg::Poin
         return;
     }
 
+    pcl::PointCloud<pcl::PointXYZ>::Ptr clustering_cloud;
+    if (!transformCloudToFrame(*msg, input_cloud, clustering_cloud))
+    {
+        return;
+    }
+
     try
     {
-        auto clusters = obstacle_detector->clustering(input_cloud, CLUSTER_THRESH, CLUSTER_MIN_SIZE, CLUSTER_MAX_SIZE);
+        auto clusters = obstacle_detector->clustering(clustering_cloud, CLUSTER_THRESH, CLUSTER_MIN_SIZE, CLUSTER_MAX_SIZE);
 
         if (!clusters.empty())
         {
@@ -145,14 +182,49 @@ void pointcloud_clustering_node::pointCloudCallback(const sensor_msgs::msg::Poin
                 convex_hull(clusters);
             }
         }
-        else {
+        else
+        {
             warnUnsafePerception("No valid clusters detected; no obstacle update published.");
         }
-        
     }
     catch (const std::exception &e)
     {
         warnUnsafePerception(std::string("Error processing point cloud: ") + e.what());
+    }
+}
+
+bool pointcloud_clustering_node::transformCloudToFrame(
+    const sensor_msgs::msg::PointCloud2 &msg,
+    const pcl::PointCloud<pcl::PointXYZ>::Ptr &input_cloud,
+    pcl::PointCloud<pcl::PointXYZ>::Ptr &output_cloud)
+{
+    if (msg.header.frame_id.empty())
+    {
+        warnUnsafePerception("Received point cloud with empty frame_id; no obstacle update published.");
+        return false;
+    }
+
+    if (msg.header.frame_id == FRAME_ID)
+    {
+        output_cloud = input_cloud;
+        return true;
+    }
+
+    try
+    {
+        const auto sensor_to_obstacle_tf =
+            tf2_buffer_.lookupTransform(FRAME_ID, msg.header.frame_id, tf2::TimePointZero);
+        output_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        output_cloud->points.reserve(input_cloud->points.size());
+        pcl::transformPointCloud(*input_cloud, *output_cloud, transformToMatrix(sensor_to_obstacle_tf));
+        return true;
+    }
+    catch (const tf2::TransformException &e)
+    {
+        warnUnsafePerception(
+            std::string("Could not transform point cloud from ") + msg.header.frame_id +
+            " to " + FRAME_ID + ": " + e.what());
+        return false;
     }
 }
 
