@@ -54,7 +54,7 @@ private:
      * @return Estimated plane model.
      * @note The input cloud should contain at least one valid seed point.
      */
-    Model estimatePlane(const pcl::PointCloud<pcl::PointXYZI> &seed_points);
+    Model estimatePlane(const pcl::PointCloud<pcl::PointXYZ> &seed_points);
 
     /**
      * @brief Extract initial ground seed points.
@@ -67,7 +67,7 @@ private:
      * @return --
      * @note If no valid low points exist, the output seed cloud is left empty.
      */
-    void extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZI>::Ptr &seed_points);
+    void extractInitialSeeds(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_in, pcl::PointCloud<pcl::PointXYZ>::Ptr &seed_points);
 
     // Voxel-grid downsampling parameters.
     float voxel_leaf_size_x_ = 0.0;
@@ -139,7 +139,7 @@ private:
      * @return --
      * @note Points inside the footprint are treated as self-observations and discarded.
      */
-    void removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZI>::Ptr &cloud);
+    void removeRobotFootprintPoints(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud);
 
     // ROS subscriber and publishers.
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;

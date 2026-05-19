@@ -87,6 +87,8 @@ ament_target_dependencies(pointcloud_clustering_node
   sensor_msgs
   geometry_msgs
   pcl_conversions
+  tf2
+  tf2_ros
 ) 
 
 ament_target_dependencies(pointcloud_roi_node

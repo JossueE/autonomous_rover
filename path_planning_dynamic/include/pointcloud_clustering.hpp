@@ -3,6 +3,8 @@
 // RORS2
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 // PCL
 #include <pcl/point_cloud.h>
@@ -39,6 +41,8 @@ private:
 
     std::shared_ptr<lidar_obstacle_detector::ObstacleDetector<pcl::PointXYZ>> obstacle_detector;
     path_planning_dynamic::msg::ObstacleCollection obstacle_collection;
+    tf2_ros::Buffer tf2_buffer_;
+    tf2_ros::TransformListener tf2_listener_;
 
     /**
      * @brief Process incoming non-ground point clouds.
@@ -51,6 +55,21 @@ private:
      * @note Invalid perception inputs only generate a warning; no obstacle message is published.
      */
     void pointCloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+
+    /**
+     * @brief Transform an incoming point cloud to the configured obstacle frame.
+     *
+     * Converts points from the sensor frame into FRAME_ID so hulls are generated
+     * using rover x/y axes instead of camera x/y axes.
+     *
+     * @param msg Original ROS point-cloud message containing the source frame.
+     * @param input_cloud PCL cloud decoded from msg.
+     * @param output_cloud Output cloud in FRAME_ID.
+     * @return true when the cloud is ready for clustering.
+     */
+    bool transformCloudToFrame(const sensor_msgs::msg::PointCloud2 &msg,
+                               const pcl::PointCloud<pcl::PointXYZ>::Ptr &input_cloud,
+                               pcl::PointCloud<pcl::PointXYZ>::Ptr &output_cloud);
 
     /**
      * @brief Build and publish convex obstacle polygons from clustered points.
