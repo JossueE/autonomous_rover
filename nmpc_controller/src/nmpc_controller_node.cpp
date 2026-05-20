@@ -12,6 +12,7 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
@@ -55,7 +56,7 @@ public:
     // NMPC discretization and differential-drive model parameters.
     this->declare_parameter<double>("h", 0.2);      // Sampling time [s].
     this->declare_parameter<int>("N", 10);          // Prediction horizon length.
-    this->declare_parameter<double>("L", 0.160);    // Track width [m].
+    this->declare_parameter<double>("L", 0.35);     // Track width [m].
     this->declare_parameter<double>("v_max", 0.22); // Max wheel speed [m/s].
     this->declare_parameter<double>("a_max", 0.35); // Max wheel acceleration [m/s^2].
 
@@ -72,8 +73,8 @@ public:
 
     // ROS frame and topic configuration.
     this->declare_parameter<std::string>("map_frame", "map");         // Global planning / control frame.
-    this->declare_parameter<std::string>("base_frame", "base_link");  // Robot body frame.
-    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel"); // Velocity command output topic.
+    this->declare_parameter<std::string>("base_frame", "base_footprint");  // Robot body frame.
+    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel_safe"); // Velocity command output topic.
     this->declare_parameter<std::string>("costmap_topic",
                                          "/move_base/local_costmap/costmap"); // Occupancy grid input topic.
     this->declare_parameter<std::string>("path_topic", "/drawn_plan");        // Path reference input topic.
@@ -229,6 +230,14 @@ private:
   }
 
   void occupancyCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
+    if (!msg->header.frame_id.empty() && msg->header.frame_id != map_frame_) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 2000,
+          "Ignoring occupancy grid in frame '%s'; expected '%s'",
+          msg->header.frame_id.c_str(), map_frame_.c_str());
+      return;
+    }
+
     occupancy_.origin_x = msg->info.origin.position.x;
     occupancy_.origin_y = msg->info.origin.position.y;
     occupancy_.resolution = msg->info.resolution;
@@ -243,7 +252,54 @@ private:
       return;
     }
 
-    TrajectoryReference ref = buildReferenceFromPath(*msg);
+    nav_msgs::msg::Path path_in_control_frame = *msg;
+    std::string source_frame = msg->header.frame_id;
+    if (source_frame.empty() && !msg->poses.empty()) {
+      source_frame = msg->poses.front().header.frame_id;
+    }
+
+    if (source_frame.empty()) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Ignoring path with empty frame_id; expected '%s'",
+                  map_frame_.c_str());
+      return;
+    }
+
+    if (source_frame != map_frame_) {
+      path_in_control_frame.header.frame_id = map_frame_;
+      path_in_control_frame.poses.clear();
+      path_in_control_frame.poses.reserve(msg->poses.size());
+
+      for (const auto &pose : msg->poses) {
+        geometry_msgs::msg::PoseStamped input_pose = pose;
+        if (input_pose.header.frame_id.empty()) {
+          input_pose.header.frame_id = source_frame;
+        }
+
+        geometry_msgs::msg::PoseStamped output_pose;
+        try {
+          const auto transform = tf_buffer_.lookupTransform(
+              map_frame_, input_pose.header.frame_id, input_pose.header.stamp,
+              rclcpp::Duration::from_seconds(0.1));
+          tf2::doTransform(input_pose, output_pose, transform);
+        } catch (const tf2::TransformException &ex) {
+          RCLCPP_WARN(this->get_logger(),
+                      "Could not transform incoming path from '%s' to '%s': %s",
+                      input_pose.header.frame_id.c_str(), map_frame_.c_str(),
+                      ex.what());
+          return;
+        }
+
+        output_pose.header.frame_id = map_frame_;
+        path_in_control_frame.poses.push_back(output_pose);
+      }
+
+      RCLCPP_INFO(this->get_logger(),
+                  "Transformed path from '%s' to '%s' before loading reference",
+                  source_frame.c_str(), map_frame_.c_str());
+    }
+
+    TrajectoryReference ref = buildReferenceFromPath(path_in_control_frame);
 
     if (!ref.valid()) {
       RCLCPP_WARN(this->get_logger(), "Generated reference is invalid");
@@ -432,6 +488,10 @@ private:
 
     RobotState x0;
     if (!lookupCurrentState(x0)) {
+      RCLCPP_DEBUG_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "NMPC waiting for TF/current state: step=%zu path_samples=%zu",
+          step_, reference_.size());
       publishStop();
       return;
     }
@@ -450,9 +510,18 @@ private:
     const std::size_t last_idx = reference_.size() - 1;
     const double dx_goal = x0.x - reference_.x[last_idx];
     const double dy_goal = x0.y - reference_.y[last_idx];
+    const double goal_distance = std::hypot(dx_goal, dy_goal);
 
-    if (std::hypot(dx_goal, dy_goal) < goal_tolerance_) {
-      RCLCPP_INFO(this->get_logger(), "Goal reached");
+    RCLCPP_DEBUG_THROTTLE(
+        this->get_logger(), *this->get_clock(), 1000,
+        "NMPC status: step=%zu progress_s=%.3f goal_dist=%.3f ref_size=%zu costmap=%zux%zu",
+        step_, progress_s_, goal_distance, reference_.size(),
+        occupancy_.width, occupancy_.height);
+
+    if (goal_distance < goal_tolerance_) {
+      RCLCPP_INFO(this->get_logger(),
+                  "Goal reached: goal_dist=%.3f tolerance=%.3f step=%zu ref_size=%zu",
+                  goal_distance, goal_tolerance_, step_, reference_.size());
       publishStop();
       active_ = false;
       return;
@@ -464,6 +533,11 @@ private:
     if (!result.success) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                           "NMPC solve failed: %s", result.message.c_str());
+      RCLCPP_DEBUG_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "NMPC solve context: step=%zu progress_s=%.3f goal_dist=%.3f obstacles=%zu data_time=%.6f solver_time=%.6f",
+          step_, progress_s_, goal_distance, result.voxel_obstacles.size(),
+          result.data_time, result.solver_time);
       publishStop();
       return;
     }
@@ -471,6 +545,10 @@ private:
     if (result.vr_horizon.size() < 2 || result.vl_horizon.size() < 2) {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                           "NMPC returned invalid control horizon");
+      RCLCPP_DEBUG_THROTTLE(
+          this->get_logger(), *this->get_clock(), 1000,
+          "NMPC invalid horizon sizes: vr=%zu vl=%zu step=%zu",
+          result.vr_horizon.size(), result.vl_horizon.size(), step_);
       publishStop();
       return;
     }

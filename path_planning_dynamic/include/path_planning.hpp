@@ -1,0 +1,284 @@
+#ifndef PATH_PLANNING_HPP
+#define PATH_PLANNING_HPP
+
+#include <rclcpp/rclcpp.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <geometry_msgs/msg/point.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
+
+// path nav msgs
+#include <nav_msgs/msg/path.hpp>
+
+// tf
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+
+// Custom msgs path_planning_dynamic for ObstacleCollection
+#include "path_planning_dynamic/msg/obstacle_collection.hpp"
+
+// Kinematics and vehicle geometry
+#include "kinematic_models.hpp"
+#include "vehicle_footprint.hpp"
+
+// State
+#include "state.hpp"
+
+// Grid map
+#include "grid_map.hpp"
+
+// Global Planner
+#include "global_planner.hpp"
+
+// C++
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <queue>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+// FlatNode and TreeFlat for the flat tree
+struct FlatNode {
+  State state;          // last state of this segment
+  int   parent;         // index in `nodes` (-1 for root)
+  double cost;          // cumulative path cost (fill as you like)
+  int primitive_index;  // primitive used to reach this node
+  uint16_t depth;       // depth from root
+  std::vector<State> segment_samples; // absolute samples generated for this edge
+};
+
+struct TreeFlat {
+  std::vector<FlatNode> nodes;   // flat storage of all nodes
+  std::vector<int>      leaves;  // indices of leaf nodes in `nodes`
+};
+
+static constexpr int    HEADING_BINS  = 64;
+static constexpr double TWO_PI        = 6.28318530717958647692;
+static constexpr double PI            = 3.14159265358979323846;
+
+
+// Wrap to (-pi, pi]
+static inline double wrapAngle(double a) {
+    while (a >  PI) a -= TWO_PI;
+    while (a <=-PI) a += TWO_PI;
+    return a;
+}
+
+// Key for "same discrete state" at this resolution
+struct LatticeKey {
+    int gx, gy, hb;
+    bool operator==(const LatticeKey& o) const noexcept {
+        return gx==o.gx && gy==o.gy && hb==o.hb;
+    }
+};
+struct LatticeKeyHash {
+    size_t operator()(const LatticeKey& k) const noexcept {
+        // 64-bit mix
+        uint64_t x = (uint64_t)(uint32_t)k.gx;
+        uint64_t y = (uint64_t)(uint32_t)k.gy;
+        uint64_t h = (uint64_t)(uint32_t)k.hb;
+        uint64_t z = (x * 0x9E3779B185EBCA87ULL) ^ (y << 6) ^ (y >> 2) ^ (h * 0xC2B2AE3D27D4EB4FULL);
+        return (size_t)z;
+    }
+};
+
+// Item in OPEN (min-heap by f)
+struct PQItem {
+    int idx;         // index in out.nodes
+    double f_est;    // g + h_lb at push time
+    double g_copy;   // g used to create this item (for staleness check)
+    bool operator<(const PQItem& o) const noexcept {
+        // std::priority_queue is max-heap, so invert
+        return f_est > o.f_est;
+    }
+};
+
+// Compute heading bin
+static inline int heading_bin(double theta) {
+    double t = wrapAngle(theta) + PI;                // [0, 2pi)
+    double w = TWO_PI / (double)HEADING_BINS;
+    int b = (int)std::floor(t / w);
+    if (b < 0) b = 0;
+    if (b >= HEADING_BINS) b = HEADING_BINS - 1;
+    return b;
+}
+
+class path_planning : public rclcpp::Node
+{
+private:
+    // tf2 buffer & listener
+    tf2_ros::Buffer tf2_buffer;
+    tf2_ros::TransformListener tf2_listener;
+
+    // vehicle geometry and kinematics
+    VehicleFootprint vehicle_footprint_;
+    std::unique_ptr<KinematicModel> kinematic_model_;
+    std::string kinematic_model_name_;
+    std::vector<MotionPrimitive> motion_primitives_;
+
+    double axle_to_front_{0.0};
+    double axle_to_back_{0.0};
+    double vehicle_width_{0.0};
+    double ackermann_max_steering_angle_{0.0};
+    double ackermann_wheelbase_{0.0};
+    double differential_linear_step_{0.0};
+    double differential_max_angular_step_{0.0};
+    int differential_angular_samples_{0};
+    bool differential_include_in_place_rotation_{true};
+
+    // Grid Map
+    std::shared_ptr<Grid_map> grid_map_;
+
+    // State
+    std::shared_ptr<State> car_state_;
+    bool car_state_valid_ = false;
+    std::string pose_frame_;
+    double z_offset_;
+
+    // global map and rescaled chunk 
+    std::shared_ptr<nav_msgs::msg::OccupancyGrid> global_map_;
+    std::shared_ptr<nav_msgs::msg::OccupancyGrid> rescaled_chunk_;
+
+    // function to get the state (position) of the car
+    void getCurrentRobotState();
+
+    // =============================
+    // global planner
+    // =============================
+    std::shared_ptr<GlobalPlanner> global_planner_;
+    std::string map_path_;
+    double x_offset_;
+    double y_offset_;
+    int start_lanelet_id_;
+    int end_lanelet_id_;
+
+    std::vector<point_struct> all_waypoints_from_global_planner_;  // waypoint with the central path and the neighbor lanelets
+    visualization_msgs::msg::MarkerArray global_planner_markers_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr global_planner_publisher_;
+    void publishGlobalPlanner();
+    void publishGlobalPlannerOccupancyGrid();
+    // =============================
+    // map combination and convine with the map obstacles
+    // =============================
+
+    // subscription for the obstacle information
+    rclcpp::Subscription<path_planning_dynamic::msg::ObstacleCollection>::SharedPtr obstacle_info_subscription_;
+    void obstacle_info_callback(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg);
+
+    // Local chunk geometry. Defaults preserved for backward compatibility, but
+    // each is exposed via parameters (planner.forward_distance,
+    // planner.chunk_radius_cells, planner.scale_factor).
+    double forward_distance = 7.0;
+    int chunk_size = 100;
+    int chunk_radius = 50;
+    // scale_factor > 1.0 -> rescaled chunk has more cells, smaller resolution;
+    // scale_factor < 1.0 -> rescaled chunk has fewer cells, larger resolution.
+    double scale_factor = 1.0;
+
+    void map_combination(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg);
+    cv::Mat toMat(const nav_msgs::msg::OccupancyGrid &map);
+    cv::Mat rescaleChunk(const cv::Mat &chunk_mat, double scale_factor);
+
+    // ----- map_combination helpers (preserve current behavior, factor out duplication) -----
+    static void worldToGrid(double wx, double wy,
+                            const nav_msgs::msg::MapMetaData &info,
+                            int &gx, int &gy);
+    static bool isInsideGrid(int gx, int gy,
+                             const nav_msgs::msg::MapMetaData &info);
+    bool validateScaleFactor(double sf) const;
+    bool extractChunkAroundRobot(nav_msgs::msg::OccupancyGrid &chunk) const;
+    bool rescaleOccupancyGridChunk(const nav_msgs::msg::OccupancyGrid &chunk);
+    void buildWindowMask(cv::Mat &window_mask,
+                         std::vector<cv::Point> &window_polygon) const;
+    int computeInflationCells() const;
+
+    // publisher for the occupancy grid 
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_test_;
+    
+    // =============================
+    // path prossecing and car dynamics
+    // =============================
+
+    // variables for the path prossecing and car dynamics
+    int pathLength; // (int): number of micro-steps per edge/primitive.
+    double step_car;  // (m): distance advanced per micro-step.
+    
+    // tree structure parameters
+    int tree_depth;        // Maximum depth of the tree (e.g., 3 levels)
+    int branching_factor;  // Number of paths per node (e.g., 5)
+
+    // local planning window parameters
+    double square_size_m_ = 1.6; // Side length of the local planning window in meters
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr real_trajectories_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr car_analytics_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr real_trajectories_pub_2;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr all_paths_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr sdv_trajectory_pub_;
+
+    // ---- scoring weights (tune as needed) ----
+    double W_FORWARD = 1.0;   // maximize forward progress
+    double W_LAT     = 0.3;   // penalize lateral offset from current heading axis
+    double W_STEER   = 0.1;   // penalize steering effort (sum |steer| along chain)
+    double W_HEAD    = 0.2;   // penalize heading error vs current heading (or goal)
+
+    cv::Mat dist_m_; // distance matrix for the A* algorithm
+
+    double SAFE_CLEAR = 0.2;    // meters: half vehicle width + margin
+    // Legacy cell-based obstacle inflation. Kept for backward compatibility.
+    int obstacle_inflation_radius_cells_ = 1;
+    // Modern meter-based obstacle inflation. When > 0 it overrides the cell
+    // value; converted to cells using the current rescaled chunk resolution.
+    double obstacle_inflation_radius_m_ = 0.0;
+    double W_OBS      = 1.2;    // weight for clearance penalty
+    double W_DSTEER   = 0.05;   // weight for smoothness (|Δsteer|)
+
+    // Build chain indices root->leaf
+    inline void build_chain_indices(const TreeFlat& flat, int leaf_idx, std::vector<int>& chain) const;
+
+    // publish the best path from the flat tree
+    void publishBestPathFromFlat(const TreeFlat& flat, int leaf_idx, int color_idx);
+    void publishAllPathsFromFlat(const TreeFlat& flat);
+    void publishTrajectoryPath(const TreeFlat& flat, int leaf_idx);
+
+    // generate the trajectory based on the flat tree on the A* algorithm
+    int generateTrajectoryTree_AStar_flat_map_with_waypoints(const State& root_state, TreeFlat& out);
+    int generateTrajectoryTreeImpl(const State& root_state, TreeFlat& out, bool use_waypoints);
+
+    void buildDistanceField();
+    double clearanceMeters(int gx, int gy) const;
+
+    // --- waypoint attraction (priority-aware) ---
+    cv::Mat dist_wp1_m_;   // meters to priority-1 path
+    cv::Mat dist_wp2_m_;   // meters to priority-2 path
+    bool has_wp1_ = false;
+    bool has_wp2_ = false;
+
+    double W_WP1 = 2.5;    // weight for distance to prio-1 path; higher keeps paths near centerline
+    double W_WP2 = 0.3;    // weight for distance to prio-2 path; lower avoids pulling toward adjacent edges
+    double WP_STROKE_RADIUS_CELLS = 2.0; // thickness when rasterizing lines
+
+    void buildWaypointDistanceFields();  // builds dist_wp1_m_ / dist_wp2_m_
+
+    // Occupancy grid parameters
+    double global_planner_resolution_;
+    int global_planner_close_radius_ = 1;
+    int global_planner_close_iters_ = 1;
+    int global_planner_outside_value_;
+    std::string global_planner_frame_id_;
+    std::string global_planner_occupancy_output_topic_;
+    nav_msgs::msg::OccupancyGrid global_planner_occupancy_grid_;
+
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr global_planner_occupancy_grid_publisher_;
+
+public:
+    path_planning();
+    ~path_planning();
+};
+
+#endif

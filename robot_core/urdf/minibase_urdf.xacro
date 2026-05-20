@@ -1,0 +1,305 @@
+<?xml version="1.0"?>
+<robot name="robot" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- ========================================================== -->
+  <!--                 CONSTANTES Y MACROS                        -->
+  <!-- ========================================================== -->
+  <xacro:property name="PI" value="3.14159265"/>
+
+  <xacro:macro name="box_inertial" params="mass x y z">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (y*y + z*z) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (x*x + z*z) / 12.0}"
+        iyz="0.0"
+        izz="${mass * (x*x + y*y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="cylinder_inertial" params="mass radius length">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass * (3.0 * radius*radius + length*length) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (3.0 * radius*radius + length*length) / 12.0}"
+        iyz="0.0"
+        izz="${mass * radius*radius / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="dummy_inertial">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.001"/>
+      <inertia ixx="0.000001" ixy="0.0" ixz="0.0" iyy="0.000001" iyz="0.0" izz="0.000001"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ========================================================== -->
+  <!--                       CHASIS                               -->
+  <!-- ========================================================== -->
+  <!-- Argumentos y Propiedades -->
+  <xacro:arg name="base_color" default="0.45 0.48 0.50 1.0"/>
+  <xacro:property name="wheelSeparation" value="0.35"/>
+  <xacro:property name="wheelRadius" value="0.1"/>
+  <xacro:property name="baseLength" value="0.55"/>
+  <xacro:property name="baseWidth" value="${wheelSeparation-0.06}"/>
+  <xacro:property name="baseHeight" value="${wheelRadius-0.02}"/>
+
+  <!-- Materiales -->
+  <material name="base_gray">
+    <color rgba="$(arg base_color)"/>
+  </material>
+
+  <!-- Enlaces y Articulaciones -->
+  <link name="base_footprint">
+    <xacro:dummy_inertial/>
+  </link>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheelRadius}" rpy="0 0 0"/>
+  </joint>
+  
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${baseLength} ${baseWidth} ${baseHeight}"/>
+      </geometry>
+      <material name="base_gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${baseLength} ${baseWidth} ${baseHeight}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertial mass="8.0" x="${baseLength}" y="${baseWidth}" z="${baseHeight}"/>
+  </link>
+
+  <!-- ========================================================== -->
+  <!--                       LLANTAS                              -->
+  <!-- ========================================================== -->
+  <!-- Propiedades -->
+  <xacro:property name="wheelThickness" value="0.09"/>
+
+  <!-- Materiales -->
+  <material name="wheel_black">
+    <color rgba="0.02 0.02 0.02 1.0"/>
+  </material>
+
+  <!-- Enlaces y Articulaciones -->
+  
+  <!-- Rueda Izquierda -->
+  <joint name="wheel_left_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="wheel_left_link"/>
+    <origin xyz="0 ${wheelSeparation/2} 0" rpy="${-PI/2} 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  
+  <link name="wheel_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${wheelThickness}" radius="${wheelRadius}"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${wheelThickness}" radius="${wheelRadius}"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertial mass="0.8" radius="${wheelRadius}" length="${wheelThickness}"/>
+  </link>
+  
+  <!-- Rueda Derecha -->
+  <joint name="wheel_right_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="wheel_right_link"/>
+    <origin xyz="0 ${-wheelSeparation/2} 0" rpy="${-PI/2} 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  
+  <link name="wheel_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${wheelThickness}" radius="${wheelRadius}"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${wheelThickness}" radius="${wheelRadius}"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertial mass="0.8" radius="${wheelRadius}" length="${wheelThickness}"/>
+  </link>
+  
+  <!-- ========================================================== -->
+  <!--                       SENSORES                             -->
+  <!-- ========================================================== -->
+
+  <!-- ======================= IMU ======================= -->
+  <xacro:arg name="imu_offset_x" default="0.065"/>
+  <xacro:arg name="imu_offset_y" default="0.0"/>
+  <xacro:arg name="imu_offset_z" default="0.24"/>
+  <xacro:arg name="imu_offset_roll" default="0.0"/>
+  <xacro:arg name="imu_offset_pitch" default="0.0"/>
+  <xacro:arg name="imu_offset_yaw" default="0.0"/>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="$(arg imu_offset_x) $(arg imu_offset_y) $(arg imu_offset_z)" rpy="$(arg imu_offset_roll) $(arg imu_offset_pitch) $(arg imu_offset_yaw)"/>
+  </joint>
+  
+  <material name="imu_blue">
+    <color rgba="0.2 0.3 0.8 1.0"/>
+  </material>
+
+  <link name="imu_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.06 0.06 0.06"/>
+      </geometry>
+      <material name="imu_blue"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.06 0.06 0.06"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertial mass="0.1" x="0.06" y="0.06" z="0.06"/>
+  </link>
+
+  <!-- ====================== LIDAR ====================== -->
+  <xacro:arg name="LIDAR_MODEL" default="pacecat"/> <!-- pacecat, pacecat_cr, rplidar -->
+  <xacro:arg name="lidar_offset_x" default="0.2125"/>
+  <xacro:arg name="lidar_offset_y" default="0.0"/>
+  <xacro:arg name="lidar_offset_z" default="0.24"/>
+  <xacro:arg name="lidar_offset_roll" default="0.0"/>
+  <xacro:arg name="lidar_offset_pitch" default="0.0"/>
+  <xacro:arg name="lidar_offset_yaw" default="0.0"/>
+
+  <xacro:property name="LIDAR_MODEL" value="$(arg LIDAR_MODEL)"/>
+  <xacro:property name="lidar_frame" value="scan_central_link"/>
+  <xacro:property name="lidar_yaw_val" value="$(arg lidar_offset_yaw)"/>
+
+  <material name="lidar_black">
+    <color rgba="0.0 0.0 0.0 1.0"/>
+  </material>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="${lidar_frame}"/>
+    <xacro:if value="${LIDAR_MODEL == 'pacecat'}" >
+      <origin xyz="$(arg lidar_offset_x) $(arg lidar_offset_y) $(arg lidar_offset_z)" rpy="0 0 0"/>
+    </xacro:if>
+    <xacro:if value="${LIDAR_MODEL == 'rplidar'}" >
+      <origin xyz="$(arg lidar_offset_x) $(arg lidar_offset_y) $(arg lidar_offset_z)" rpy="0 0 ${PI}"/>
+    </xacro:if>
+  </joint>
+  
+  <link name="${lidar_frame}">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.06" radius="0.0275"/>
+      </geometry>
+      <material name="lidar_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.055" radius="0.055"/>
+      </geometry>
+    </collision>
+    <xacro:cylinder_inertial mass="0.2" radius="0.055" length="0.055"/>
+  </link>
+
+  <!-- ===================== KINECT ====================== -->
+  <xacro:arg name="kinect_offset_x" default="0.115"/>
+  <xacro:arg name="kinect_offset_y" default="0.0"/>
+  <xacro:arg name="kinect_offset_z" default="0.39"/>
+  <xacro:arg name="kinect_offset_roll" default="0.0"/>
+  <xacro:arg name="kinect_offset_pitch" default="0.0"/>
+  <xacro:arg name="kinect_offset_yaw" default="0.0"/>
+
+  <joint name="kinect_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_base"/>
+    <origin xyz="$(arg kinect_offset_x) $(arg kinect_offset_y) $(arg kinect_offset_z)" rpy="$(arg kinect_offset_roll) $(arg kinect_offset_pitch) $(arg kinect_offset_yaw)"/>
+  </joint>
+  
+  <material name="kinect_black">
+    <color rgba="0. 0. 0. 1" />
+  </material>
+  <material name="kinect_dark_grey">
+    <color rgba="0.1 0.1 0.1 1" />
+  </material>
+  <material name="kinect_grey">
+    <color rgba="0.6 0.6 0.6 1" />
+  </material>
+  <material name="kinect_white">
+    <color rgba="0.9 0.9 0.9 1" />
+  </material>
+
+  <link name="camera_body">
+    <visual>
+      <origin xyz="0. 0. 0." />
+      <geometry>
+        <box size="0.0994 0.0996 0.023" />
+      </geometry>
+      <material name="kinect_white" />
+    </visual>
+  </link>
+
+  <link name="camera_base">
+    <visual>
+      <origin xyz="-0.013 0. 0." />
+      <geometry>
+        <box size="0.026 0.103 0.039" />
+      </geometry>
+      <material name="kinect_grey" />
+    </visual>
+  </link>
+
+  <link name="camera_visor">
+    <visual>
+      <origin xyz="-0.0128 0. 0." />
+      <geometry>
+        <box size="0.026 0.101 0.037" />
+      </geometry>
+      <material name="kinect_black" />
+    </visual>
+  </link>
+
+  <joint name="camera_base_to_body" type="fixed">
+    <parent link="camera_base" />
+    <child link="camera_body" />
+    <origin xyz="-0.0757 0. 0.008" rpy="0. 0. 0." />
+  </joint>
+
+  <joint name="camera_base_to_visor" type="fixed">
+    <parent link="camera_base" />
+    <child link="camera_visor" />
+    <origin xyz="0. 0. 0." rpy="0. 0. 0." />
+  </joint>
+
+</robot>

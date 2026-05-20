@@ -131,6 +131,12 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
+install(DIRECTORY
+  config
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
 install(DIRECTORY src
   DESTINATION share/${PROJECT_NAME}
 )

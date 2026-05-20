@@ -193,6 +193,7 @@ class OdomEncoder : public rclcpp::Node
 
     void reset_odom_request(const std_srvs::srv::Trigger::Request::SharedPtr request_message, std_srvs::srv::Trigger::Response::SharedPtr response_message)
     {
+      (void)request_message;
       double robot_pos = enco_->xy_pos;
       if(robot_pos > xy_tolerance_){
         RCLCPP_WARN(this->get_logger(), "Robot not at home due to xy position: %.2f m", robot_pos);
