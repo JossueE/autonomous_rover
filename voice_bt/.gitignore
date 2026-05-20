@@ -1,0 +1,7 @@
+# ── Voice model assets ───────────────────────────────────────────────────────
+# These are large binary files downloaded by install_deps.sh.
+# Source: Vosk (alphacephei.com/vosk/models) + Piper (github.com/rhasspy/piper)
+voice_assets/model_en/
+voice_assets/model_es/
+voice_assets/piper/
+voice_assets/*.onnx
