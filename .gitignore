@@ -1,9 +1,30 @@
-.vscode/
+# ── ROS 2 build artifacts ────────────────────────────────────────────────────
 build/
 install/
 log/
+
+# ── Compiled objects & shared libraries ──────────────────────────────────────
 *.o
 *.so
-*__pycache__/
-.codex
+*.so.*
 
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Machine-learning / voice model binaries ──────────────────────────────────
+# These are large binary assets fetched by voice_bt/install_deps.sh.
+# Do NOT commit them — download on first setup instead.
+*.onnx
+*.mdl
+*.fst
+*.dubm
+*.ie
+*.mat
+*.ort
+
+# ── Editor / tooling ─────────────────────────────────────────────────────────
+.vscode/
+.codex
