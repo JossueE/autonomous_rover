@@ -161,7 +161,7 @@ ros2 run imu_filter_madgwick imu_filter_madgwick_node   --ros-args   -p use_mag:
 
 ros2 launch rover_bringup hardware_bringup.launch.py use_wheel_odometry:=false
 
-rviz2 -d install/autonomous_robot_simulation/share/autonomous_robot_simulation/rviz/new.rviz
+rviz2 -d src/autonomous_rover/rover_bringup/rviz/nav.rviz
 
 ros2 launch rtabmap_launch rtabmap.launch.py   localization:=true   rtabmap_args:="\
   --Reg/Force3DoF true \
@@ -170,7 +170,7 @@ ros2 launch rtabmap_launch rtabmap.launch.py   localization:=true   rtabmap_args
   --Grid/RangeMax 4.5 \
   --Grid/MaxGroundHeight 0.10 \
   --Grid/MaxObstacleHeight 1.20 \
-  --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=true   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_footprint   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=0.3   queue_size:=20   qos:=2   rviz:=false
+  --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=false   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_footprint   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=2.0 queue_size:=20   qos:=2   rviz:=false
 
 ros2 launch path_planning_dynamic planning.launch.py 
 
