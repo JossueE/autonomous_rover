@@ -36,13 +36,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES std_msgs geometry_msgs polygon_msgs
 )
 
-find_package(lanelet2_core)
-find_package(lanelet2_io)
-find_package(lanelet2_maps)
-find_package(lanelet2_projection)
-find_package(lanelet2_routing)
-find_package(lanelet2_traffic_rules)
-find_package(lanelet2_validation)
+find_package(lanelet2_core REQUIRED)
+find_package(lanelet2_io REQUIRED)
+find_package(lanelet2_maps REQUIRED)
+find_package(lanelet2_projection REQUIRED)
+find_package(lanelet2_routing REQUIRED)
+find_package(lanelet2_traffic_rules REQUIRED)
+find_package(lanelet2_validation REQUIRED)
 
 add_executable(path_planning_node
                 src/path_planning.cpp
