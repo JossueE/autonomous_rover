@@ -14,6 +14,7 @@ from rclpy.node import Node
 import py_trees
 from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from std_msgs.msg import String
 
 from voice_bt.tts import PiperTTS
 from voice_bt.asr_thread import BilingualASR
@@ -83,6 +84,14 @@ class VoiceBTNode(Node):
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("bt_tick_rate", 10.0)
 
+        # RTAB-Map sensor topic params — overridable for simulation.
+        # Defaults are the hardware Azure Kinect topic names.
+        self.declare_parameter("rtabmap_rgb_topic",          "/k4a/rgb/image_raw")
+        self.declare_parameter("rtabmap_depth_topic",        "/k4a/depth_to_rgb/image_raw")
+        self.declare_parameter("rtabmap_camera_info_topic",  "/k4a/rgb/camera_info")
+        self.declare_parameter("rtabmap_scan_cloud_topic",   "/k4a/points2")
+        self.declare_parameter("rtabmap_imu_topic",          "/k4a/imu_filtered")
+
         waypoints_file = self.get_parameter("waypoints_file").value
         self._waypoints = load_waypoints(waypoints_file)
         self.get_logger().info(f"Loaded {len(self._waypoints)} waypoints from {waypoints_file}")
@@ -98,6 +107,10 @@ class VoiceBTNode(Node):
         self.create_subscription(
             Odometry, self.get_parameter("odom_topic").value,
             self._on_odom, 10)
+        self.create_subscription(
+            String, "/bt_inject_command",
+            self._on_inject_command, 10)
+        self.get_logger().info("Listening for injected BT commands on /bt_inject_command")
 
         # ─── TTS ───
         self._tts = PiperTTS(
@@ -158,6 +171,12 @@ class VoiceBTNode(Node):
             self._bb.set("robot_pose",
                          (msg.pose.pose.position.x, msg.pose.pose.position.y))
             self._bb.set("pose_source", "odom")
+
+    def _on_inject_command(self, msg: String):
+        """Accept a command string from /bt_inject_command for scripted testing."""
+        if cmd := msg.data.strip().lower():
+            self._bb.set("command", cmd)
+            self.get_logger().info(f"BT command injected: '{cmd}'")
 
     # ─── BT tick ─────────────────────────────────────────────────────────
 

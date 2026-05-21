@@ -1,0 +1,221 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo Harmonic simulation overlay for the minibase rover.
+  Includes the base URDF with sim:=true (continuous wheel joints + depth camera frames)
+  and adds all <gazebo> plugin/sensor blocks needed for simulation.
+
+  Usage:
+    xacro minibase_sim.xacro sim:=true [LIDAR_MODEL:=pacecat] [...]
+-->
+<robot name="robot" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- Include base description with sim mode enabled -->
+  <xacro:include filename="$(find robot_core)/urdf/minibase_urdf.xacro"/>
+  <!-- sim:=true is passed from the launch file when processing this xacro -->
+
+  <!-- ================================================================ -->
+  <!--                     DIFFERENTIAL DRIVE                           -->
+  <!-- ================================================================ -->
+  <!-- Subscribes to gz topic cmd_vel_safe (bridged from /cmd_vel_safe) -->
+  <!-- Publishes gz topic gz_wheel_odom (bridged to /wheel/odom in ROS) -->
+  <!-- tf_topic is set to __none so the EKF owns odom→base_footprint TF -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+      <left_joint>wheel_left_joint</left_joint>
+      <right_joint>wheel_right_joint</right_joint>
+      <wheel_separation>0.35</wheel_separation>
+      <wheel_radius>0.1</wheel_radius>
+      <max_linear_acceleration>1.0</max_linear_acceleration>
+      <max_angular_acceleration>2.0</max_angular_acceleration>
+      <topic>cmd_vel_safe</topic>
+      <odom_topic>gz_wheel_odom</odom_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <tf_topic>__none</tf_topic>
+    </plugin>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--                     JOINT STATE PUBLISHER                        -->
+  <!-- ================================================================ -->
+  <!-- Publishes wheel joint positions so robot_state_publisher can     -->
+  <!-- compute TF for the continuous wheel joints.                      -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>joint_states</topic>
+      <joint_name>wheel_left_joint</joint_name>
+      <joint_name>wheel_right_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--              2D GPU LIDAR  (scan_central_link)                   -->
+  <!-- Matches PaceCat: 360°, 30 Hz, 0.1–30 m range                    -->
+  <!-- Publishes gz topic: scan  →  bridged to ROS /scan                -->
+  <!-- ================================================================ -->
+  <gazebo reference="scan_central_link">
+    <sensor name="pacecat_lidar" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>30</update_rate>
+      <topic>scan</topic>
+      <gz_frame_id>scan_central_link</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1.0</resolution>
+            <min_angle>0.0</min_angle>
+            <max_angle>6.28318530718</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.10</min>
+          <max>30.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--           RGBD DEPTH CAMERA  (camera_base)                       -->
+  <!-- Approximates Azure Kinect DK: 640×576, ~70° FOV, 0.5–5.5 m      -->
+  <!-- Publishes gz topics under depth_camera/ prefix:                   -->
+  <!--   depth_camera/image          → ROS /depth_camera/image          -->
+  <!--   depth_camera/depth_image    → ROS /depth_camera/depth_image    -->
+  <!--   depth_camera/camera_info    → ROS /depth_camera/camera_info    -->
+  <!--   depth_camera/points         → ROS /depth_camera/points         -->
+  <!-- ================================================================ -->
+  <gazebo reference="camera_base">
+    <sensor name="depth_camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <topic>depth_camera</topic>
+      <gz_frame_id>camera_base</gz_frame_id>
+      <camera>
+        <horizontal_fov>1.2217</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>576</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.5</near>
+          <far>5.5</far>
+        </clip>
+        <optical_frame_id>depth_camera_optical_frame</optical_frame_id>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--           WITMOTION IMU  (imu_link)  →  EKF                      -->
+  <!-- Publishes gz topic: imu  →  bridged to ROS /imu/data_raw         -->
+  <!-- imu_filter_madgwick processes it → /imu/data → EKF imu0          -->
+  <!-- ================================================================ -->
+  <gazebo reference="imu_link">
+    <sensor name="witmotion_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <topic>imu</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--        AZURE KINECT IMU  (camera_base)  →  RTAB-Map              -->
+  <!-- Separate from the depth camera sensor above.                     -->
+  <!-- Publishes gz topic: depth_camera/imu                             -->
+  <!--   bridged to ROS /depth_camera/imu → RTAB-Map imu_topic         -->
+  <!-- ================================================================ -->
+  <gazebo reference="camera_base">
+    <sensor name="kinect_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <topic>depth_camera/imu</topic>
+      <gz_frame_id>camera_base</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--                     WHEEL FRICTION                               -->
+  <!-- High mu values prevent wheel slip on flat indoor surfaces.       -->
+  <!-- ================================================================ -->
+  <gazebo reference="wheel_left_link">
+    <mu1>100.0</mu1>
+    <mu2>50.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+    <minDepth>0.001</minDepth>
+    <maxVel>0.1</maxVel>
+  </gazebo>
+  <gazebo reference="wheel_right_link">
+    <mu1>100.0</mu1>
+    <mu2>50.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+    <minDepth>0.001</minDepth>
+    <maxVel>0.1</maxVel>
+  </gazebo>
+
+  <!-- ================================================================ -->
+  <!--                   CASTER FRICTION                                -->
+  <!-- Near-zero friction lets the ball casters slide freely,           -->
+  <!-- replicating the self-aligning behaviour of real swivel casters.  -->
+  <!-- ================================================================ -->
+  <gazebo reference="caster_front_link">
+    <mu1>0.0</mu1>
+    <mu2>0.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+    <minDepth>0.001</minDepth>
+    <maxVel>1.0</maxVel>
+  </gazebo>
+  <gazebo reference="caster_rear_link">
+    <mu1>0.0</mu1>
+    <mu2>0.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+    <minDepth>0.001</minDepth>
+    <maxVel>1.0</maxVel>
+  </gazebo>
+
+</robot>
