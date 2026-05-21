@@ -1,0 +1,89 @@
+# ros_gz_bridge topic configuration for rover Gazebo Harmonic simulation.
+#
+# Gazebo sensor/plugin topic names (left side) map to their ROS counterparts.
+# All gz topic names match exactly what the plugins declare in minibase_sim.xacro.
+
+# ── Simulation clock ────────────────────────────────────────────────────────
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# ── Velocity command (ROS → Gazebo DiffDrive plugin) ────────────────────────
+# voice_bt, teleop, and NMPC all publish to /cmd_vel_safe on the ROS side.
+# The DiffDrive plugin subscribes to gz topic "cmd_vel_safe".
+- ros_topic_name: "/cmd_vel_safe"
+  gz_topic_name: "/cmd_vel_safe"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# ── Wheel odometry (DiffDrive gz_wheel_odom → ROS /wheel/odom) ──────────────
+# ekf.yaml's odom0 expects /wheel/odom; this matches the hardware odometry2 node.
+- ros_topic_name: "/wheel/odom"
+  gz_topic_name: "/gz_wheel_odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# ── Joint states (wheel positions for robot_state_publisher TF) ──────────────
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# ── WitMotion IMU → EKF pipeline ────────────────────────────────────────────
+# Sensor publishes gz topic "imu". Bridged to /imu/data_raw.
+# imu_filter_madgwick processes /imu/data_raw → /imu/data → EKF imu0.
+- ros_topic_name: "/imu/data_raw"
+  gz_topic_name: "/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# ── Azure Kinect IMU → RTAB-Map ─────────────────────────────────────────────
+# kinect_imu sensor publishes gz topic "depth_camera/imu".
+# Bridged to /depth_camera/imu which becomes rtabmap_imu_topic in sim.
+- ros_topic_name: "/depth_camera/imu"
+  gz_topic_name: "/depth_camera/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# ── 2D LIDAR ────────────────────────────────────────────────────────────────
+- ros_topic_name: "/scan"
+  gz_topic_name: "/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# ── RGBD camera streams ──────────────────────────────────────────────────────
+# RGB image → RTAB-Map rgb_topic in sim
+- ros_topic_name: "/depth_camera/image"
+  gz_topic_name: "/depth_camera/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# Depth image → RTAB-Map depth_topic in sim
+- ros_topic_name: "/depth_camera/depth_image"
+  gz_topic_name: "/depth_camera/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# Camera info → RTAB-Map camera_info_topic in sim
+- ros_topic_name: "/depth_camera/camera_info"
+  gz_topic_name: "/depth_camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+# Point cloud → pointcloud_roi_node (path planning) in sim
+- ros_topic_name: "/depth_camera/points"
+  gz_topic_name: "/depth_camera/points"
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS
