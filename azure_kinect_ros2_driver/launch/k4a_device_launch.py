@@ -11,6 +11,10 @@ def generate_launch_description():
         name="k4a_ros2_node",
         output="screen",
         emulate_tty=True
+        parameters=[{
+            "depth_mode": "NFOV_2X2BINNED",
+        }], 
+            
     )
 
 

@@ -200,8 +200,17 @@ void K4ACalibrationTransformData::publishImuToDepthTf()
       imu_extrinsics->rotation[6], imu_extrinsics->rotation[7], imu_extrinsics->rotation[8]);
   tf2::Transform depth_to_imu_transform(depth_to_imu_rotation, depth_to_imu_translation);
 
+  // El IMU nativo del K4A es (X back, Y left, Z down). Como en k4a_ros_device.cpp
+  // negamos X y Z de gyro/accel para publicarlos en REP-103 (X forward, Y left, Z up),
+  // el frame `k4a_imu_link` debe rotarse 180° en Y para mantener la consistencia
+  // entre datos y TF. Sin esto, RTAB-Map y otros consumidores interpretarían el
+  // IMU como rotado 180° respecto a base_link.
+  tf2::Quaternion rep103_correction;
+  rep103_correction.setRPY(0.0, M_PI, 0.0);
+  tf2::Transform rep103_transform(rep103_correction);
+
   geometry_msgs::msg::TransformStamped static_transform;
-  static_transform.transform = tf2::toMsg(depth_to_imu_transform.inverse());
+  static_transform.transform = tf2::toMsg(depth_to_imu_transform.inverse() * rep103_transform);
 
   static_transform.header.stamp = node_->now();
   static_transform.header.frame_id = tf_prefix_ + depth_camera_frame_;
