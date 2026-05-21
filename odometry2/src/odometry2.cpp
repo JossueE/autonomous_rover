@@ -88,7 +88,8 @@ class OdomEncoder : public rclcpp::Node
 
     
     float right_tic = 0, left_tic = 0;
-    float first_right = 0, first_left = 0;
+    double first_right = 0.0, first_left = 0.0;
+    bool first_left_received = false, first_right_received = false;
     double current_time, left_tic_time_, right_tic_time_;
     std::string ns_, bare_ns_ = "", frame_id_ = "odom", child_frame_id_ = "base_footprint";
     
@@ -177,6 +178,15 @@ class OdomEncoder : public rclcpp::Node
     
     void leftCallback(const std_msgs::msg::Float64::SharedPtr msg)
     {
+      // Capturamos el primer valor del encoder como offset; sin esto el primer
+      // delta queda como (msg->data - 0) y se interpreta como un salto inicial
+      // espurio en x/yaw.
+      if (!first_left_received) {
+        first_left = msg->data;
+        first_left_received = true;
+        left_tic_time_ = now().seconds();
+        return;
+      }
       left_tic = msg->data - first_left;
       if (wheelL_is_backward) left_tic = (-1*left_tic);
       enco_->lefttick(left_tic);
@@ -185,6 +195,12 @@ class OdomEncoder : public rclcpp::Node
 
     void rightCallback(const std_msgs::msg::Float64::SharedPtr msg)
     {
+      if (!first_right_received) {
+        first_right = msg->data;
+        first_right_received = true;
+        right_tic_time_ = now().seconds();
+        return;
+      }
       right_tic = msg->data - first_right;
       if (wheelR_is_backward) right_tic = (-1*right_tic);
       enco_->righttick(right_tic);

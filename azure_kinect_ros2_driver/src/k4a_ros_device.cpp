@@ -51,7 +51,7 @@ K4AROS2Device::K4AROS2Device()
   // Declare the params
   std::string pSensorSn = this->declare_parameter<std::string>("sensor_sn", "");
   this->declare_parameter<bool>("depth_enabled", true);
-  this->declare_parameter<std::string>("depth_mode", "NFOV_UNBINNED");
+  this->declare_parameter<std::string>("depth_mode", "NFOV_2X2BINNED");
   this->declare_parameter<bool>("color_enabled", true);
   std::string pColorFormat = this->declare_parameter<std::string>("color_format", "bgra");
   this->declare_parameter<std::string>("color_resolution", "1536P");
@@ -752,15 +752,17 @@ k4a_result_t K4AROS2Device::getImuFrame(const k4a_imu_sample_t& sample, std::sha
   imu_msg->header.stamp = timestampToROS(sample.acc_timestamp_usec);
   this->printTimestampDebugMessage("IMU", imu_msg->header.stamp);
 
-  // The correct convention in ROS is to publish the raw sensor data, in the
-  // sensor coordinate frame. Do that here.
-  imu_msg->angular_velocity.x = sample.gyro_sample.xyz.x;
-  imu_msg->angular_velocity.y = sample.gyro_sample.xyz.y;
-  imu_msg->angular_velocity.z = sample.gyro_sample.xyz.z;
+  // K4A IMU nativo: X back, Y left, Z down.
+  // Rotamos 180° en Y para entregarlo en REP-103 (X forward, Y left, Z up),
+  // que es lo que asumen imu_filter_madgwick (world_frame=enu) y RTAB-Map.
+  // Sin esto, Madgwick converge ambiguamente y RTAB-Map ve base_link girado 180° en Z.
+  imu_msg->angular_velocity.x = -sample.gyro_sample.xyz.x;
+  imu_msg->angular_velocity.y =  sample.gyro_sample.xyz.y;
+  imu_msg->angular_velocity.z = -sample.gyro_sample.xyz.z;
 
-  imu_msg->linear_acceleration.x = sample.acc_sample.xyz.x;
-  imu_msg->linear_acceleration.y = sample.acc_sample.xyz.y;
-  imu_msg->linear_acceleration.z = sample.acc_sample.xyz.z;
+  imu_msg->linear_acceleration.x = -sample.acc_sample.xyz.x;
+  imu_msg->linear_acceleration.y =  sample.acc_sample.xyz.y;
+  imu_msg->linear_acceleration.z = -sample.acc_sample.xyz.z;
 
   // Disable the orientation component of the IMU message since it's invalid
   imu_msg->orientation_covariance[0] = -1.0;

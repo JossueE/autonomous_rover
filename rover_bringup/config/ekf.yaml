@@ -17,6 +17,11 @@ ekf_filter_node:
                    false, false, false]
 
     imu0: imu/data
+    # El WitMotion actualmente no publica angular_velocity (gyro), por lo que
+    # Madgwick produce un yaw arbitrario y fijo. Tratamos el yaw como
+    # diferencial para que el EKF parta con yaw=0 alineado con el robot,
+    # y el vyaw del wheel odom sea quien construya la rotación.
+    imu0_differential: true
     imu0_config: [false, false, false,
                   false, false, true,
                   false, false, false,
