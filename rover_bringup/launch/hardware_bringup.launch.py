@@ -144,9 +144,9 @@ def generate_launch_description():
         use_wheel_odometry_arg,
         robot_state_publisher_launch,
         wheels_driver_node,
-        odometry_node,
-        odometry_wheels_only_node,
-        raw_imu_node,
-        imu_node,
-        ekf_node
+        # odometry_node,
+        # odometry_wheels_only_node,
+        # raw_imu_node,
+        # imu_node,
+        # ekf_node
     ])

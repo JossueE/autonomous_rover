@@ -59,6 +59,10 @@ def generate_launch_description():
         ),
         launch_arguments={
             'localization': rtabmap_localization,
+            'visual_odometry': 'true',
+            'icp_odometry': 'true',
+            'odom_topic': 'odom',
+            'publish_tf_odom': 'true',
             'rtabmap_args': rtabmap_mode_args,
             'rgb_topic': '/k4a/rgb/image_raw',
             'depth_topic': '/k4a/depth_to_rgb/image_raw',
@@ -88,9 +92,10 @@ def generate_launch_description():
             'rtabmap_args',
             default_value=(
                 '--Reg/Force3DoF true '
+                '--Reg/Strategy 2 '
                 '--Grid/FromDepth false '
                 '--Grid/3D false '
-                '--Grid/RangeMax 4.5 '
+                '--Grid/RangeMax 5.0 '
                 '--Grid/MaxGroundHeight 0.10 '
                 '--Grid/MaxObstacleHeight 1.20 '
                 '--Grid/CellSize 0.05'

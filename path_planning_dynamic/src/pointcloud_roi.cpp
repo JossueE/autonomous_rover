@@ -97,7 +97,7 @@ pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node
         rclcpp::SensorDataQoS(),
         std::bind(&pointcloud_roi_node::pointCloudCallback, this, std::placeholders::_1));
     pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_topic, 10);
-    pub_ground_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_topic_ground, 10);
+    pub_ground_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(output_topic_ground, rclcpp::SensorDataQoS());
     pub_marker_ = this->create_publisher<visualization_msgs::msg::Marker>(robot_footprint_topic, 10);
 
     ROI_MAX_POINT = Eigen::Vector4f(roi_max_x_, roi_max_y_, roi_max_z_, 1);
