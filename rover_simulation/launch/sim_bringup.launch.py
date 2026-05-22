@@ -205,7 +205,7 @@ def generate_launch_description():
             "rviz":                    "false",
             "rtabmap_args": (
                 "--delete_db_on_start --Reg/Force3DoF true "
-                "--Grid/FromDepth false --Grid/3D false "
+                "--Grid/FromDepth true --Grid/3D false "
                 "--Grid/RangeMax 4.5 --Grid/MaxGroundHeight 0.10 "
                 "--Grid/MaxObstacleHeight 1.20 --Grid/CellSize 0.05"
             ),
