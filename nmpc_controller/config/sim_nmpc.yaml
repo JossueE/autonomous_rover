@@ -3,18 +3,18 @@ nmpc_controller_node:
     h: 0.2
     N: 10
     L: 0.35
-    v_max: 0.1
-    a_max: 0.05
+    v_max: 0.2
+    a_max: 0.1
     lambda_1: 2.5
     lambda_theta: 0.9
     lambda_v: 0.05
-    d_safe: 0.1
+    d_safe: 0.2
     voxel_size: 0.5
     max_range: 3.5
     max_obstacles: 20
     map_frame: "map"
     base_frame: "base_footprint"
     cmd_vel_topic: "/cmd_vel_safe"
-    costmap_topic: "/global_planner_occupancy_grid"
+    costmap_topic: "/occupancy_grid_obstacles"
     path_topic: "/sdv_trajectory"
     goal_tolerance: 0.1

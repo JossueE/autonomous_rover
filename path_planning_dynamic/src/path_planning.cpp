@@ -796,7 +796,7 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
         }
         try {
             obstacle_to_map_tf = tf2_buffer.lookupTransform(
-                map_frame, msg->header.frame_id, rclcpp::Time(msg->header.stamp));
+                map_frame, msg->header.frame_id, tf2::TimePointZero);
         }
         catch (tf2::TransformException &ex) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
