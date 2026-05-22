@@ -379,7 +379,7 @@
     <joint name="camera_base_to_optical" type="fixed">
       <parent link="camera_base"/>
       <child link="depth_camera_optical_frame"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="${-PI/2} 0 ${-PI/2}"/>
     </joint>
   </xacro:if>
 

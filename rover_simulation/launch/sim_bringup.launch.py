@@ -217,6 +217,25 @@ def generate_launch_description():
         condition=IfCondition(use_rtabmap),
     )
 
+    # ── 7.5 Point cloud (native ROS generation) ─────────────────────────────
+    # Replaces the Gazebo-bridged cloud, which is misaligned because Gazebo
+    # always generates XYZ along its own X-forward axis while stamping the
+    # message with the optical frame. point_cloud_xyz reads the depth image
+    # (already correct thanks to the optical-frame rotation in the URDF) and
+    # publishes to /depth_camera/points so all downstream nodes are unaffected.
+    point_cloud_xyz_node = Node(
+        package="rtabmap_util",
+        executable="point_cloud_xyz",
+        name="point_cloud_xyz_node",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+        remappings=[
+            ("depth/image",       "/depth_camera/depth_image"),
+            ("depth/camera_info", "/depth_camera/camera_info"),
+            ("cloud",             "/depth_camera/points"),
+        ],
+    )
+
     # ── 8. Path planning nodes (optional) ────────────────────────────────────
     # Launched individually (not via planning.launch.py) so pointcloud_roi_node
     # can be given the simulation pointcloud topic (/depth_camera/points).
@@ -330,6 +349,7 @@ def generate_launch_description():
             imu_filter_node,
             ekf_node,
             rtabmap_launch,
+            point_cloud_xyz_node,
             path_planner_node,
             pointcloud_clustering_node,
             pointcloud_roi_node,
