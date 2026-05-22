@@ -1,6 +1,6 @@
 """Gazebo Harmonic simulation bringup for the minibase rover.
 
-Uses the tugbot_depot world from Gazebo Fuel (world name: world_demo).
+Uses the local depot world (world name: world_demo).
 All optional components are guarded by IfCondition arguments so the launch
 can be used for incremental testing:
 
@@ -49,8 +49,8 @@ def generate_launch_description():
             description="Pass use_sim_time:=true to all nodes"),
         DeclareLaunchArgument(
             "world",
-            default_value="https://fuel.gazebosim.org/1.0/MovAi/worlds/tugbot_depot",
-            description="Fuel URI or local path to Gazebo world SDF"),
+            default_value=os.path.join(pkg_sim, "worlds", "depot.sdf"),
+            description="Path to Gazebo world SDF"),
         DeclareLaunchArgument(
             "spawn_x", default_value="0.0"),
         DeclareLaunchArgument(
@@ -103,8 +103,6 @@ def generate_launch_description():
     )
 
     # ── 2. Gazebo Harmonic ───────────────────────────────────────────────────
-    # The tugbot_depot world (world name: world_demo) already ships with
-    # physics, user-commands, scene-broadcaster, sensors and IMU system plugins.
     gz_sim_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -120,8 +118,6 @@ def generate_launch_description():
     )
 
     # ── 3. Spawn robot ───────────────────────────────────────────────────────
-    # Delayed 5 s to allow Gazebo to load the world (tugbot_depot downloads
-    # ~3.7 MB from Fuel on first launch).
     spawn_robot = TimerAction(
         period=5.0,
         actions=[Node(
