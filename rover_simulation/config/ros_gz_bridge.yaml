@@ -81,9 +81,12 @@
   gz_type_name: "gz.msgs.CameraInfo"
   direction: GZ_TO_ROS
 
-# Point cloud → pointcloud_roi_node (path planning) in sim
-- ros_topic_name: "/depth_camera/points"
-  gz_topic_name: "/depth_camera/points"
-  ros_type_name: "sensor_msgs/msg/PointCloud2"
-  gz_type_name: "gz.msgs.PointCloudPacked"
-  direction: GZ_TO_ROS
+# Point cloud bridge disabled: Gazebo stamps the cloud with the optical frame but
+# generates XYZ data along its own axes, causing a left/right misalignment in RViz.
+# The cloud is now built natively in ROS by point_cloud_xyz (rtabmap_util) from the
+# depth image, which is correctly oriented by the optical-frame rotation in the URDF.
+# - ros_topic_name: "/depth_camera/points"
+#   gz_topic_name: "/depth_camera/points"
+#   ros_type_name: "sensor_msgs/msg/PointCloud2"
+#   gz_type_name: "gz.msgs.PointCloudPacked"
+#   direction: GZ_TO_ROS
