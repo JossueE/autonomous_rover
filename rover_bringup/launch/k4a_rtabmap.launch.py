@@ -15,6 +15,9 @@ def generate_launch_description():
     rtabmap_localization = PythonExpression([
         "'true' if '", mode, "' == 'localization' else 'false'"
     ])
+    rtabmap_rviz = PythonExpression([
+        "'true' if '", mode, "' == 'mapping' else 'false'"
+    ])
     rtabmap_mode_args = [
         PythonExpression(["'--delete_db_on_start ' if '", mode, "' == 'mapping' else ''"]),
         rtabmap_args,
@@ -77,7 +80,7 @@ def generate_launch_description():
             'wait_for_transform': '2.0',
             'queue_size': '20',
             'qos': '2',
-            'rviz': 'false',
+            'rviz': rtabmap_rviz,
         }.items(),
     )
 
