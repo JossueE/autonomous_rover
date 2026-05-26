@@ -75,6 +75,7 @@ private:
     float voxel_leaf_size_z_ = 0.0;
 
     bool voxel_condition = false;
+    bool ground_filter_condition = false;
 
     // Region-of-interest bounds in the point-cloud frame.
     double roi_max_x_ = 0.0; // Front limit.

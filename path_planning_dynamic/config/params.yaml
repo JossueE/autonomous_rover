@@ -52,7 +52,8 @@ pointcloud_roi_node:
     output_topic: "/points_rotated"               # Output topic for filtered/rotated point cloud (full ROI).
     output_topic_ground: "/points_rotated_notground"  # Output topic for non-ground points.
     sensor_rotation_y_: 0.0              # Sensor rotation around Y axis (rad). Compensates LiDAR tilt.
-    voxel_condition: false               # SVD ground fitting assumes Z=up (LiDAR frame); Kinect optical frame (Z=depth) breaks it.
+    voxel_condition: true                # Downsample ROI before clustering.
+    ground_filter_condition: false       # SVD ground fitting assumes Z=up; Kinect optical frame uses Z=depth.
     roi_max_x_: 2.0                      # Reduced from 10m - indoor rooms don't need 10m forward range; halves point count.
     roi_max_y_: 0.35                     # Kinect optical frame: Y=down. Floor is at Y~=+0.48m (sensor height). Tighter lower cap to keep the floor out of the obstacle pipeline.
     roi_max_z_: 2.0                      # Kinect optical frame: Z=depth. Extended far depth range to see farther obstacles.

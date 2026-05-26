@@ -30,11 +30,13 @@ pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node
     this->declare_parameter("voxel_leaf_size_y", double(0.0));
     this->declare_parameter("voxel_leaf_size_z", double(0.0));
     this->declare_parameter("voxel_condition", false);
+    this->declare_parameter("ground_filter_condition", false);
 
     this->get_parameter("voxel_leaf_size_x", voxel_leaf_size_x_);
     this->get_parameter("voxel_leaf_size_y", voxel_leaf_size_y_);
     this->get_parameter("voxel_leaf_size_z", voxel_leaf_size_z_);
     this->get_parameter("voxel_condition", voxel_condition);
+    this->get_parameter("ground_filter_condition", ground_filter_condition);
 
     // ==================  variables for ROI boundaries  ==================
 
@@ -119,6 +121,7 @@ pointcloud_roi_node::pointcloud_roi_node(/* args */) : Node("pointcloud_roi_node
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->voxel_leaf_size_y: %f \033[0m", voxel_leaf_size_y_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->voxel_leaf_size_z: %f \033[0m", voxel_leaf_size_z_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->voxel_condition: %d \033[0m", voxel_condition);
+    RCLCPP_INFO(this->get_logger(), "\033[1;34m---->ground_filter_condition: %d \033[0m", ground_filter_condition);
 
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->roi_max_x: %f \033[0m", roi_max_x_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34m---->roi_max_y: %f \033[0m", roi_max_y_);
@@ -178,15 +181,19 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     auto cloud_roi = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
     roi_filter.filter(*cloud_roi);
 
+    auto filtered_cloud = cloud_roi;
     if (voxel_condition)
     {
         // create voxel grid object
         pcl::VoxelGrid<pcl::PointXYZ> vg;
         vg.setInputCloud(cloud_roi);
         vg.setLeafSize(voxel_leaf_size_x_, voxel_leaf_size_y_, voxel_leaf_size_z_);
-        auto filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        filtered_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         vg.filter(*filtered_cloud);
+    }
 
+    if (ground_filter_condition)
+    {
         // Separate ground and non-ground points
         auto notground_points = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         notground_points->points.reserve(filtered_cloud->points.size());
@@ -218,11 +225,11 @@ void pointcloud_roi_node::pointCloudCallback(const sensor_msgs::msg::PointCloud2
     }
     else
     {
-        sensor_msgs::msg::PointCloud2 downsampled_cloud_msg;
-        pcl::toROSMsg(*cloud_roi, downsampled_cloud_msg);
-        downsampled_cloud_msg.header = msg->header;
-        downsampled_cloud_msg.header.frame_id = msg->header.frame_id;
-        pub_ground_->publish(downsampled_cloud_msg);
+        sensor_msgs::msg::PointCloud2 filtered_cloud_msg;
+        pcl::toROSMsg(*filtered_cloud, filtered_cloud_msg);
+        filtered_cloud_msg.header = msg->header;
+        filtered_cloud_msg.header.frame_id = msg->header.frame_id;
+        pub_ground_->publish(filtered_cloud_msg);
     }
 
     // Publish robot footprint marker
