@@ -166,25 +166,40 @@ void GlobalPlanner::map_routing(lanelet::LaneletMapPtr &map)
     const auto startLanelet = *startIt;
     const auto endLanelet   = *endIt;
 
-    const auto reachableSet = routingGraph->reachableSet(startLanelet, MAX_ROUTING_COST);
-    const bool isReachable = std::any_of(
-        reachableSet.begin(), reachableSet.end(),
-        [&](const lanelet::ConstLanelet &ll) { return ll.id() == endLanelet.id(); });
+    const std::vector<std::pair<lanelet::ConstLanelet, lanelet::ConstLanelet>> route_candidates = {
+        {startLanelet, endLanelet},
+        {startLanelet.invert(), endLanelet},
+        {startLanelet, endLanelet.invert()},
+        {startLanelet.invert(), endLanelet.invert()},
+    };
 
-    if (!isReachable)
+    bool found_route = false;
+    double best_path_length = std::numeric_limits<double>::infinity();
+    routing::LaneletPath best_shortest_path;
+
+    for (const auto &candidate : route_candidates)
     {
-        std::cout << red << "Goal lanelet is not reachable from the start lanelet." << reset << std::endl;
+        Optional<routing::Route> route = routingGraph->getRoute(candidate.first, candidate.second, 0);
+        if (!route)
+            continue;
+
+        const double path_length = calculatePathLength(route->shortestPath());
+        if (!found_route || path_length < best_path_length)
+        {
+            found_route = true;
+            best_path_length = path_length;
+            best_shortest_path = route->shortestPath();
+        }
+    }
+
+    if (!found_route)
+    {
+        std::cout << red << "Goal lanelet is not reachable from the start lanelet in either direction." << reset << std::endl;
         return;
     }
 
-    std::cout << green << "Goal lanelet is reachable from the start lanelet." << reset << std::endl;
-
-    Optional<routing::Route> route = routingGraph->getRoute(startLanelet, endLanelet, 0);
-    if (!route)
-        return;
-
-    std::cout << green << "Route found" << reset << std::endl;
-    generateNeighborWaypoints(map, routingGraph, route->shortestPath());
+    std::cout << green << "Route found, length=" << best_path_length << " m" << reset << std::endl;
+    generateNeighborWaypoints(map, routingGraph, best_shortest_path);
 }
 
 // ===================================================================
