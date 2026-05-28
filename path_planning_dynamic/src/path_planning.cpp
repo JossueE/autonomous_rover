@@ -61,6 +61,8 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<std::string>("pose_frame", "lidar_link");
     this->declare_parameter<int>("start_lanelet_id", 0);
     this->declare_parameter<int>("end_lanelet_id", 0);
+    this->declare_parameter<std::string>("start_lanelet_name", "");
+    this->declare_parameter<std::string>("end_lanelet_name", "");
 
     // Occupancy grid parameters
     this->declare_parameter<double>("global_planner_resolution", 0.20);
@@ -129,6 +131,8 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("pose_frame", pose_frame_);
     this->get_parameter("start_lanelet_id", start_lanelet_id_);
     this->get_parameter("end_lanelet_id", end_lanelet_id_);
+    this->get_parameter("start_lanelet_name", start_lanelet_name_);
+    this->get_parameter("end_lanelet_name", end_lanelet_name_);
 
     kinematic_model_name_ = normalizeModelName(configured_model);
     axle_to_front_ = selectConfiguredDouble(vehicle_axle_to_front, legacy_axle_to_front);
@@ -203,7 +207,6 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     rescaled_chunk_ = std::make_shared<nav_msgs::msg::OccupancyGrid>();
     car_state_ = std::make_shared<State>();
     grid_map_ = nullptr;
-    global_planner_ = std::make_shared<GlobalPlanner>(x_offset_, y_offset_, map_path_, start_lanelet_id_, end_lanelet_id_, global_planner_resolution_, global_planner_close_radius_, global_planner_close_iters_, global_planner_outside_value_, global_planner_frame_id_);
 
     vehicle_footprint_.setDimensions(axle_to_front_, axle_to_back_, vehicle_width_);
     AckermannKinematicsConfig ackermann_config;
@@ -256,6 +259,26 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     RCLCPP_INFO(this->get_logger(), "\033[1;34mpose_frame: %s\033[0m", pose_frame_.c_str());
     RCLCPP_INFO(this->get_logger(), "\033[1;34mstart_lanelet_id: %d\033[0m", start_lanelet_id_);
     RCLCPP_INFO(this->get_logger(), "\033[1;34mend_lanelet_id: %d\033[0m", end_lanelet_id_);
+    RCLCPP_INFO(this->get_logger(), "\033[1;34mstart_lanelet_name: %s\033[0m", start_lanelet_name_.c_str());
+    RCLCPP_INFO(this->get_logger(), "\033[1;34mend_lanelet_name: %s\033[0m", end_lanelet_name_.c_str());
+
+    rebuildGlobalPlanner();
+    params_handler_ = this->add_on_set_parameters_callback(
+        std::bind(&path_planning::onPlannerParameters, this, std::placeholders::_1));
+}
+
+
+path_planning::~path_planning()
+{
+}
+
+void path_planning::rebuildGlobalPlanner()
+{
+    global_planner_ = std::make_shared<GlobalPlanner>(
+        x_offset_, y_offset_, map_path_, start_lanelet_id_, end_lanelet_id_,
+        start_lanelet_name_, end_lanelet_name_, global_planner_resolution_,
+        global_planner_close_radius_, global_planner_close_iters_,
+        global_planner_outside_value_, global_planner_frame_id_);
 
     all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
     publishGlobalPlanner();
@@ -267,9 +290,61 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     }
 }
 
-
-path_planning::~path_planning()
+rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
+    const std::vector<rclcpp::Parameter> &params)
 {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    result.reason = "accepted";
+
+    int new_start_id = start_lanelet_id_;
+    int new_end_id = end_lanelet_id_;
+    std::string new_start_name = start_lanelet_name_;
+    std::string new_end_name = end_lanelet_name_;
+    bool should_rebuild = false;
+
+    for (const auto &param : params) {
+        const auto &name = param.get_name();
+        if (name == "start_lanelet_id" || name == "end_lanelet_id") {
+            if (param.get_type() != rclcpp::ParameterType::PARAMETER_INTEGER) {
+                result.successful = false;
+                result.reason = name + " must be an integer";
+                return result;
+            }
+            if (name == "start_lanelet_id") {
+                new_start_id = param.as_int();
+            } else {
+                new_end_id = param.as_int();
+            }
+            should_rebuild = true;
+        } else if (name == "start_lanelet_name" || name == "end_lanelet_name") {
+            if (param.get_type() != rclcpp::ParameterType::PARAMETER_STRING) {
+                result.successful = false;
+                result.reason = name + " must be a string";
+                return result;
+            }
+            if (name == "start_lanelet_name") {
+                new_start_name = param.as_string();
+            } else {
+                new_end_name = param.as_string();
+            }
+            should_rebuild = true;
+        }
+    }
+
+    if (should_rebuild) {
+        start_lanelet_id_ = new_start_id;
+        end_lanelet_id_ = new_end_id;
+        start_lanelet_name_ = new_start_name;
+        end_lanelet_name_ = new_end_name;
+        RCLCPP_INFO(this->get_logger(),
+            "Rebuilding global planner: start_id=%d end_id=%d start_name='%s' end_name='%s'",
+            start_lanelet_id_, end_lanelet_id_,
+            start_lanelet_name_.c_str(), end_lanelet_name_.c_str());
+        rebuildGlobalPlanner();
+    }
+
+    return result;
 }
 
 // =============================
@@ -796,7 +871,7 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
         }
         try {
             obstacle_to_map_tf = tf2_buffer.lookupTransform(
-                map_frame, msg->header.frame_id, rclcpp::Time(msg->header.stamp));
+                map_frame, msg->header.frame_id, tf2::TimePointZero);
         }
         catch (tf2::TransformException &ex) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,

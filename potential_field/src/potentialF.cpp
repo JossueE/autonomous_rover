@@ -34,7 +34,7 @@ public:
     // Create Subscriber to dynamic goals
     sub_goal = this->create_subscription<geometry_msgs::msg::PoseStamped>(
         goal_topic, 10, std::bind(&PotentialField::goal_callback, this, _1));
-        
+
     // Create Publisher in command control
     cmd_pub = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 1);
     // Create Publihser of the attraction vector
@@ -52,11 +52,22 @@ public:
     this->declare_parameter<double>("max_w", max_w);
     this->declare_parameter<double>("max_v", max_v);
     this->declare_parameter<double>("vector_epsilon", vector_epsilon);
+    const double control_frequency =
+        this->declare_parameter<double>("control_frequency", 20.0);
 
     load_control_parameters();
 
-    RCLCPP_INFO(this->get_logger(), "Listening for goals on '%s'.",
-                goal_topic.c_str());
+    // Create a periodic timer to drive the control loop at a fixed rate,
+    // decoupled from the LiDAR scan callback frequency.
+    const auto period_ms = std::chrono::duration<double, std::milli>(
+        1000.0 / control_frequency);
+    control_timer_ = this->create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(period_ms),
+        std::bind(&PotentialField::control_loop, this));
+
+    RCLCPP_INFO(this->get_logger(),
+                "Listening for goals on '%s'. Control frequency: %.1f Hz.",
+                goal_topic.c_str(), control_frequency);
     if (has_goal) {
       RCLCPP_INFO(this->get_logger(), "Initial goal | x: %.3f | y: %.3f",
                   goal_x, goal_y);
@@ -252,10 +263,7 @@ private:
     has_goal = true;
     goal_reached = false;
 
-    if (has_odom) {
-      ComputeAttraction(goal_x, goal_y);
-    }
-
+    // Attraction will be recomputed on the next odom callback / timer tick.
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                          "Goal updated | x: %.3f | y: %.3f", goal_x, goal_y);
   }
@@ -356,10 +364,13 @@ private:
     geometry_msgs::msg::PoseStamped repulsion =
         PublishVector(V_repulsion[0], V_repulsion[1]);
     rep_pub->publish(repulsion);
-
-    // Call the controller function to process the updated repulsion vector
-    controller();
+    // NOTE: controller() is driven by control_timer_, not by the scan callback.
   }
+
+  // Timer that drives the control loop at a fixed rate
+  rclcpp::TimerBase::SharedPtr control_timer_;
+  // Periodic callback for the control loop
+  void control_loop() { controller(); }
 
   // odom subsriber variable declaration
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom;

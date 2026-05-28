@@ -8,6 +8,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rcl_interfaces REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -36,13 +37,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES std_msgs geometry_msgs polygon_msgs
 )
 
-find_package(lanelet2_core)
-find_package(lanelet2_io)
-find_package(lanelet2_maps)
-find_package(lanelet2_projection)
-find_package(lanelet2_routing)
-find_package(lanelet2_traffic_rules)
-find_package(lanelet2_validation)
+find_package(lanelet2_core REQUIRED)
+find_package(lanelet2_io REQUIRED)
+find_package(lanelet2_maps REQUIRED)
+find_package(lanelet2_projection REQUIRED)
+find_package(lanelet2_routing REQUIRED)
+find_package(lanelet2_traffic_rules REQUIRED)
+find_package(lanelet2_validation REQUIRED)
 
 add_executable(path_planning_node
                 src/path_planning.cpp
@@ -58,6 +59,7 @@ add_executable(pointcloud_roi_node src/pointcloud_roi.cpp)
 
 ament_target_dependencies(path_planning_node
   rclcpp
+  rcl_interfaces
   std_msgs
   sensor_msgs
   grid_map_ros

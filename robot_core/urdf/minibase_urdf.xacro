@@ -42,11 +42,27 @@
     </inertial>
   </xacro:macro>
 
+  <xacro:macro name="sphere_inertial" params="mass radius">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${2.0 * mass * radius*radius / 5.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${2.0 * mass * radius*radius / 5.0}"
+        iyz="0.0"
+        izz="${2.0 * mass * radius*radius / 5.0}"/>
+    </inertial>
+  </xacro:macro>
+
   <!-- ========================================================== -->
   <!--                       CHASIS                               -->
   <!-- ========================================================== -->
   <!-- Argumentos y Propiedades -->
   <xacro:arg name="base_color" default="0.45 0.48 0.50 1.0"/>
+  <xacro:arg name="sim" default="false"/>
+  <xacro:property name="sim_mode" value="$(arg sim)"/>
   <xacro:property name="wheelSeparation" value="0.35"/>
   <xacro:property name="wheelRadius" value="0.1"/>
   <xacro:property name="baseLength" value="0.55"/>
@@ -100,7 +116,7 @@
   <!-- Enlaces y Articulaciones -->
   
   <!-- Rueda Izquierda -->
-  <joint name="wheel_left_joint" type="fixed">
+  <joint name="wheel_left_joint" type="${'continuous' if sim_mode else 'fixed'}">
     <parent link="base_link"/>
     <child link="wheel_left_link"/>
     <origin xyz="0 ${wheelSeparation/2} 0" rpy="${-PI/2} 0 0"/>
@@ -125,7 +141,7 @@
   </link>
   
   <!-- Rueda Derecha -->
-  <joint name="wheel_right_joint" type="fixed">
+  <joint name="wheel_right_joint" type="${'continuous' if sim_mode else 'fixed'}">
     <parent link="base_link"/>
     <child link="wheel_right_link"/>
     <origin xyz="0 ${-wheelSeparation/2} 0" rpy="${-PI/2} 0 0"/>
@@ -149,6 +165,47 @@
     <xacro:cylinder_inertial mass="0.8" radius="${wheelRadius}" length="${wheelThickness}"/>
   </link>
   
+  <!-- ========================================================== -->
+  <!--                    SWIVEL CASTERS                          -->
+  <!-- ========================================================== -->
+  <!-- Ball casters (sphere r=0.03 m) placed under the chassis    -->
+  <!-- front and rear to prevent tipping. Zero friction is set    -->
+  <!-- in the sim overlay so they slide freely like real swivels. -->
+  <xacro:property name="casterRadius" value="0.03"/>
+  <!-- z offset puts the sphere centre at exactly ground level    -->
+  <!-- base_link is wheelRadius above ground, so:                 -->
+  <!--   z = casterRadius - wheelRadius = 0.03 - 0.10 = -0.07    -->
+  <xacro:property name="casterZ" value="${casterRadius - wheelRadius}"/>
+  <!-- x offset: inset ~5 cm from each end of the chassis         -->
+  <xacro:property name="casterX" value="${baseLength/2 - 0.05}"/>
+
+  <xacro:macro name="swivel_caster" params="prefix x_pos">
+    <joint name="caster_${prefix}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="caster_${prefix}_link"/>
+      <origin xyz="${x_pos} 0 ${casterZ}" rpy="0 0 0"/>
+    </joint>
+    <link name="caster_${prefix}_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="${casterRadius}"/>
+        </geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="${casterRadius}"/>
+        </geometry>
+      </collision>
+      <xacro:sphere_inertial mass="0.1" radius="${casterRadius}"/>
+    </link>
+  </xacro:macro>
+
+  <xacro:swivel_caster prefix="front" x_pos="${casterX}"/>
+  <xacro:swivel_caster prefix="rear"  x_pos="${-casterX}"/>
+
   <!-- ========================================================== -->
   <!--                       SENSORES                             -->
   <!-- ========================================================== -->
@@ -301,5 +358,29 @@
     <child link="camera_visor" />
     <origin xyz="0. 0. 0." rpy="0. 0. 0." />
   </joint>
+
+
+  <!-- ===================== SIM-ONLY FRAMES ===================== -->
+  <!-- These frames are required in simulation for RTAB-Map and   -->
+  <!-- pointcloud_roi_node which reference depth_camera_link.     -->
+  <xacro:if value="${sim_mode}">
+    <link name="depth_camera_link">
+      <xacro:dummy_inertial/>
+    </link>
+    <joint name="camera_base_to_depth_link" type="fixed">
+      <parent link="camera_base"/>
+      <child link="depth_camera_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <link name="depth_camera_optical_frame">
+      <xacro:dummy_inertial/>
+    </link>
+    <joint name="camera_base_to_optical" type="fixed">
+      <parent link="camera_base"/>
+      <child link="depth_camera_optical_frame"/>
+      <origin xyz="0 0 0" rpy="${-PI/2} 0 ${-PI/2}"/>
+    </joint>
+  </xacro:if>
 
 </robot>

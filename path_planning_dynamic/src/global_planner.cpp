@@ -16,11 +16,15 @@ using lanelet::Optional;
 // Constructor
 // ===================================================================
 GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_path,
-                             int start_lanelet_id, int end_lanelet_id, double resolution,
+                             int start_lanelet_id, int end_lanelet_id,
+                             std::string start_lanelet_name, std::string end_lanelet_name,
+                             double resolution,
                              int close_radius, int close_iters, int outside_value,
                              std::string frame_id)
     : start_lanelet_id_(start_lanelet_id),
       end_lanelet_id_(end_lanelet_id),
+      start_lanelet_name_(std::move(start_lanelet_name)),
+      end_lanelet_name_(std::move(end_lanelet_name)),
       x_offset_(x_offset),
       y_offset_(y_offset),
       map_path_(std::move(map_path)),
@@ -83,6 +87,17 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
                   << " point(s) lacking local_x/local_y." << reset << std::endl;
     }
 
+    if (!start_lanelet_name_.empty() &&
+        !resolveLaneletName(map, start_lanelet_name_, start_lanelet_id_, "start_lanelet_name"))
+    {
+        return;
+    }
+    if (!end_lanelet_name_.empty() &&
+        !resolveLaneletName(map, end_lanelet_name_, end_lanelet_id_, "end_lanelet_name"))
+    {
+        return;
+    }
+
     map_routing(map);
     generateOccupancyGrid(map);
     // C7: do NOT unconditionally set occupancy_grid_ready_ = true here;
@@ -139,6 +154,28 @@ bool GlobalPlanner::isInMainPath(lanelet::Id id) const
     return path_ids_.count(id) > 0;
 }
 
+bool GlobalPlanner::resolveLaneletName(const lanelet::LaneletMapPtr &map,
+                                       const std::string &lanelet_name,
+                                       int &lanelet_id,
+                                       const std::string &label) const
+{
+    for (const auto &ll : map->laneletLayer)
+    {
+        if (ll.hasAttribute("name") &&
+            ll.attribute("name").value() == lanelet_name)
+        {
+            lanelet_id = static_cast<int>(ll.id());
+            std::cout << green << "[GlobalPlanner] " << label << "='" << lanelet_name
+                      << "' resolved to lanelet_id=" << lanelet_id << reset << std::endl;
+            return true;
+        }
+    }
+
+    std::cerr << red << "[GlobalPlanner] Could not find lanelet with name='"
+              << lanelet_name << "' for " << label << reset << std::endl;
+    return false;
+}
+
 // ===================================================================
 // Routing graph build & route discovery
 // ===================================================================
@@ -166,25 +203,40 @@ void GlobalPlanner::map_routing(lanelet::LaneletMapPtr &map)
     const auto startLanelet = *startIt;
     const auto endLanelet   = *endIt;
 
-    const auto reachableSet = routingGraph->reachableSet(startLanelet, MAX_ROUTING_COST);
-    const bool isReachable = std::any_of(
-        reachableSet.begin(), reachableSet.end(),
-        [&](const lanelet::ConstLanelet &ll) { return ll.id() == endLanelet.id(); });
+    const std::vector<std::pair<lanelet::ConstLanelet, lanelet::ConstLanelet>> route_candidates = {
+        {startLanelet, endLanelet},
+        {startLanelet.invert(), endLanelet},
+        {startLanelet, endLanelet.invert()},
+        {startLanelet.invert(), endLanelet.invert()},
+    };
 
-    if (!isReachable)
+    bool found_route = false;
+    double best_path_length = std::numeric_limits<double>::infinity();
+    routing::LaneletPath best_shortest_path;
+
+    for (const auto &candidate : route_candidates)
     {
-        std::cout << red << "Goal lanelet is not reachable from the start lanelet." << reset << std::endl;
+        Optional<routing::Route> route = routingGraph->getRoute(candidate.first, candidate.second, 0);
+        if (!route)
+            continue;
+
+        const double path_length = calculatePathLength(route->shortestPath());
+        if (!found_route || path_length < best_path_length)
+        {
+            found_route = true;
+            best_path_length = path_length;
+            best_shortest_path = route->shortestPath();
+        }
+    }
+
+    if (!found_route)
+    {
+        std::cout << red << "Goal lanelet is not reachable from the start lanelet in either direction." << reset << std::endl;
         return;
     }
 
-    std::cout << green << "Goal lanelet is reachable from the start lanelet." << reset << std::endl;
-
-    Optional<routing::Route> route = routingGraph->getRoute(startLanelet, endLanelet, 0);
-    if (!route)
-        return;
-
-    std::cout << green << "Route found" << reset << std::endl;
-    generateNeighborWaypoints(map, routingGraph, route->shortestPath());
+    std::cout << green << "Route found, length=" << best_path_length << " m" << reset << std::endl;
+    generateNeighborWaypoints(map, routingGraph, best_shortest_path);
 }
 
 // ===================================================================

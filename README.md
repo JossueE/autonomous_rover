@@ -22,43 +22,28 @@ ros2 run azure_kinect_ros2_driver azure_kinect_node \
   --ros-args -p point_cloud:=true -p rgb_point_cloud:=false -p fps:=30
 ```
 
-- Start IMU filter (Madgwick). This remaps the raw IMU and publishes a filtered IMU topic used by RTAB-Map:
+- Start robot hardware bringup. This uses wheel odometry plus the Azure Kinect IMU through Madgwick and the EKF, publishing `/odom` and `odom -> base_footprint`:
 
 ```bash
-ros2 run imu_filter_madgwick imu_filter_madgwick_node \
-  --ros-args \
-  -p use_mag:=false -p world_frame:=enu -p publish_tf:=false \
-  -r imu/data_raw:=/k4a/imu -r imu/data:=/k4a/imu_filtered
-```
-
-- Start robot hardware bringup (motor controllers, tf publishers, etc.):
-
-```bash
-ros2 launch rover_bringup hardware_bringup.launch.py use_wheel_odometry:=false
+ros2 launch rover_bringup hardware_bringup.launch.py \
+  use_wheel_odometry:=true \
+  use_imu_odometry:=true
 ```
 
 
 3) Launch RTAB-Map
 
 ```bash
-ros2 launch rtabmap_launch rtabmap.launch.py   rtabmap_args:="--delete_db_on_start \
-  --Reg/Force3DoF true \
-  --Grid/FromDepth false \
-  --Grid/3D false \
-  --Grid/RangeMax 4.5 \
-  --Grid/MaxGroundHeight 0.10 \
-  --Grid/MaxObstacleHeight 1.20 \
-  --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=true   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_footprint   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=0.3   queue_size:=20   qos:=2   rviz:=true
-```
-
-- Example launch with commonly tuned arguments. These tune grid generation, 3-DoF registration, synchronization, and topics used by this repository:
-
-```bash
 ros2 launch rtabmap_launch rtabmap.launch.py \
-  localization:=true \
-  rtabmap_args:="\
+  localization:=false \
+  visual_odometry:=true \
+  icp_odometry:=true \
+  odom_topic:=odom \
+  publish_tf_odom:=true \
+  rtabmap_args:="--delete_db_on_start \
+  --Reg/Strategy 2 \
   --Reg/Force3DoF true \
-  --Grid/FromDepth false \
+  --RGBD/ForceOdom3DoF true \
   --Grid/3D false \
   --Grid/RangeMax 4.5 \
   --Grid/MaxGroundHeight 0.10 \
@@ -69,22 +54,54 @@ ros2 launch rtabmap_launch rtabmap.launch.py \
   camera_info_topic:=/k4a/rgb/camera_info \
   scan_cloud_topic:=/k4a/points2 \
   subscribe_scan_cloud:=true \
-  imu_topic:=/k4a/imu_filtered \
-  wait_imu_to_init:=true \
+  imu_topic:=/k4/imu \
   frame_id:=base_footprint \
   approx_sync:=true \
   approx_sync_max_interval:=0.02 \
-  wait_for_transform:=0.3 \
+  wait_for_transform:=2.0 \
   queue_size:=20 \
   qos:=2 \
-  rviz:=false \
-  #use_sim_time:=true
+  qos_odom:=1 \
+  rviz:=true
+```
+
+- Localization against an existing RTAB-Map database uses the same EKF odometry input:
+
+```bash
+ros2 launch rtabmap_launch rtabmap.launch.py \
+  localization:=true \
+  visual_odometry:=false \
+  odom_topic:=/odom \
+  publish_tf_odom:=false \
+  rtabmap_args:="\
+  --Reg/Force3DoF true \
+  --RGBD/ForceOdom3DoF true \
+  --Grid/3D false \
+  --Grid/RangeMax 4.5 \
+  --Grid/MaxGroundHeight 0.10 \
+  --Grid/MaxObstacleHeight 1.20 \
+  --Grid/CellSize 0.05" \
+  rgb_topic:=/k4a/rgb/image_raw \
+  depth_topic:=/k4a/depth_to_rgb/image_raw \
+  camera_info_topic:=/k4a/rgb/camera_info \
+  scan_cloud_topic:=/k4a/points2 \
+  subscribe_scan_cloud:=true \
+  imu_topic:=/imu/data \
+  frame_id:=base_footprint \
+  approx_sync:=true \
+  approx_sync_max_interval:=0.02 \
+  wait_for_transform:=2.0 \
+  queue_size:=20 \
+  qos:=2 \
+  qos_odom:=1 \
+  rviz:=false
 ```
 
 
 Notes on key RTAB-Map args:
 - `--delete_db_on_start`: start fresh each run (useful during initial tuning).
 - `--Reg/Force3DoF true`: force 3-DoF (planar) registration when operating on a ground vehicle.
+- `visual_odometry:=false` and `odom_topic:=/odom`: make RTAB-Map use the EKF odometry instead of creating RGB-D odometry.
 - Grid settings (`Grid/*`): control occupancy grid generation and dimensions; tune `RangeMax` and `CellSize` to fit environment.
 - `approx_sync` and `approx_sync_max_interval`: allow approximate sensor synchronization; reduce false mismatches from sensor latency.
 
@@ -155,31 +172,13 @@ rviz2 -d install/autonomous_robot_simulation/share/autonomous_robot_simulation/r
 
 ### Notas Jossue 
 
-ros2 run azure_kinect_ros2_driver azure_kinect_node   --ros-args -p point_cloud:=true -p rgb_point_cloud:=false -p fps:=30
+ros2 launch rover_bringup hardware_bringup.launch.py 
 
-ros2 run imu_filter_madgwick imu_filter_madgwick_node   --ros-args   -p use_mag:=false -p world_frame:=enu -p publish_tf:=false   -r imu/data_raw:=/k4a/imu -r imu/data:=/k4a/imu_filtered
+ros2 launch rover_bringup k4a_rtabmap.launch.py mode:=localization
 
-ros2 launch rover_bringup hardware_bringup.launch.py use_wheel_odometry:=false
-
-rviz2 -d src/autonomous_rover/rover_bringup/rviz/nav.rviz
-
-ros2 launch rtabmap_launch rtabmap.launch.py   localization:=true   rtabmap_args:="\
-  --Reg/Force3DoF true \
-  --Grid/FromDepth false \
-  --Grid/3D false \
-  --Grid/RangeMax 4.5 \
-  --Grid/MaxGroundHeight 0.10 \
-  --Grid/MaxObstacleHeight 1.20 \
-  --Grid/CellSize 0.05"   rgb_topic:=/k4a/rgb/image_raw   depth_topic:=/k4a/depth_to_rgb/image_raw   camera_info_topic:=/k4a/rgb/camera_info   scan_cloud_topic:=/k4a/points2   subscribe_scan_cloud:=false   imu_topic:=/k4a/imu_filtered   wait_imu_to_init:=true   frame_id:=base_footprint   approx_sync:=true   approx_sync_max_interval:=0.02   wait_for_transform:=2.0 queue_size:=20   qos:=2   rviz:=false
-
-ros2 launch path_planning_dynamic planning.launch.py 
-
-ros2 run robot_core teleop_keyboard.py --ros-args -r cmd_vel:=/cmd_vel_safe
-
-ros2 launch nmpc_controller sim_nmpc.launch.py costmap_topic:=/occupancy_grid_obstacles
-
-
+ros2 launch path_planning_dynamic planning.launch.py
 
 # Don not use
 rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
 pcl_ply2pcd -format 1 /tmp/rtabmap_cloud_cloud.ply ~/.ros/rtabmap_cloud_binary.pcd
+

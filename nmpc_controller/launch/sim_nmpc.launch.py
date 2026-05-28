@@ -23,7 +23,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "use_sim_time",
-                default_value="True",
+                default_value="False"   ,
                 description="Use Gazebo simulation clock",
             ),
             DeclareLaunchArgument(
@@ -48,7 +48,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "costmap_topic",
-                default_value="/global_planner_occupancy_grid",
+                default_value="/occupancy_grid_obstacles",
                 description="Occupancy grid topic consumed by NMPC",
             ),
             DeclareLaunchArgument(

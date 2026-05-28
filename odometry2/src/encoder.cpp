@@ -1,10 +1,6 @@
 #include "encoder.h"
 #include <math.h>
 
-double dt = 0.001;
-float delta_L = 0, delta_R = 0;
-double dl = 0.0, dr = 0.0, dc = 0.0, dth = 0.0;
-
 void ENCODER::lefttick(float tick1){
     left_tic = tick1;
 }
@@ -21,6 +17,10 @@ void ENCODER::reset_odometry(){
 
 void ENCODER::computeOdom(double motors_axis, double TICKS_PER_METER, double current_time)
 {
+    double dt = 0.001;
+    float delta_L = 0, delta_R = 0;
+    double dl = 0.0, dr = 0.0, dc = 0.0, dth = 0.0;
+
     delta_L = (left_tic - last_left_ticks);
     delta_R = (right_tic- last_right_ticks);
     

@@ -136,7 +136,7 @@ pointcloud_clustering_node::pointcloud_clustering_node()
         CONCAVE_ALPHA = kDefaultConcaveAlpha;
     }
 
-    sub_points_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>("/points_rotated_notground", 10, std::bind(&pointcloud_clustering_node::pointCloudCallback, this, std::placeholders::_1));
+    sub_points_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>("/points_rotated_notground", rclcpp::SensorDataQoS(), std::bind(&pointcloud_clustering_node::pointCloudCallback, this, std::placeholders::_1));
     obstacle_info_publisher_ = this->create_publisher<path_planning_dynamic::msg::ObstacleCollection>("/obstacle_info", 10);
 
     obstacle_detector = std::make_shared<lidar_obstacle_detector::ObstacleDetector<pcl::PointXYZ>>();

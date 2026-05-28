@@ -57,6 +57,10 @@ def generate_launch_description():
         ),
         package_path,
     )
+    rviz_config = resolve_map_path(
+        'src/autonomous_rover/rover_bringup/rviz/nav.rviz',
+        package_path,
+    )
 
 
     publisher_node_planner = launch_ros.actions.Node(
@@ -86,9 +90,18 @@ def generate_launch_description():
         additional_env={'RCUTILS_CONSOLE_OUTPUT_FORMAT': "{message}"}
     )
 
+    rviz = launch_ros.actions.Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config],
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
     simu_time = launch.actions.DeclareLaunchArgument(
         'use_sim_time',
-        default_value='True',
+        default_value='False',
         description='Use simulation (Gazebo) clock if true')
     
     return launch.LaunchDescription([
@@ -96,5 +109,6 @@ def generate_launch_description():
         pointcloud_roi,
         pointcloud_clustering,
         publisher_node_planner,
+        rviz,
         
     ])

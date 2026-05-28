@@ -33,6 +33,7 @@ install(DIRECTORY
 install(DIRECTORY
   config
   maps
+  rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

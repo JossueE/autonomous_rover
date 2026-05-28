@@ -37,7 +37,7 @@
   LIST_ENTRY(depth_mode,                                                                                               \
              "The mode of the depth camera. Options are: NFOV_2X2BINNED, NFOV_UNBINNED, WFOV_2X2BINNED, "              \
              "WFOV_UNBINNED, PASSIVE_IR",                                                                              \
-             std::string, std::string("NFOV_UNBINNED"))                                                                \
+             std::string, std::string("NFOV_2X2BINNED"))                                                                \
   LIST_ENTRY(color_enabled, "True if color camera should be enabled", bool, false)                                     \
   LIST_ENTRY(color_format, "The format of RGB camera. Options are: bgra, jpeg", std::string, std::string("bgra"))      \
   LIST_ENTRY(color_resolution,                                                                                         \
