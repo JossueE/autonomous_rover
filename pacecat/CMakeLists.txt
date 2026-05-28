@@ -4,6 +4,8 @@ project(pacecat)
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
+# pacecat_node includes third-party SDK headers that trigger pedantic warnings
+add_compile_options(-Wno-pedantic)
 
 # Get ROS2 version information (initial letter) from environment variables
 string(SUBSTRING $ENV{ROS_DISTRO} 0 1 tmp)
@@ -36,6 +38,11 @@ include_directories(${sensor_msgs_INCLUDE_DIRS})
 
 set(BLUESEA_SDK_PATH "./sdk/")
 file(GLOB BLUESEA_SDK_SRC "${BLUESEA_SDK_PATH}/src/*.cpp" "${BLUESEA_SDK_PATH}/src/*.c")
+
+# Suppress warnings from third-party SDK sources (vendor code, not ours)
+set_source_files_properties(${BLUESEA_SDK_SRC} PROPERTIES
+  COMPILE_FLAGS "-w"
+)
 
 add_executable(${PROJECT_NAME}_node ./src/node.cpp ${BLUESEA_SDK_SRC})
 ament_target_dependencies(${PROJECT_NAME}_node

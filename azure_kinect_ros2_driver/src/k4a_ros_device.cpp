@@ -34,10 +34,10 @@ using namespace std;
 
 K4AROS2Device::K4AROS2Device()
     : Node("k4a_ros2_node"),
-      last_capture_time_usec_(0),
       qos_(1),
-      last_imu_time_usec_(0),
       process_cloud_(false),
+      last_capture_time_usec_(0),
+      last_imu_time_usec_(0),
       imu_stream_end_of_file_(false)
 {
 
@@ -202,7 +202,7 @@ K4AROS2Device::K4AROS2Device()
       {
         device = k4a::device::open(i);
       }
-      catch (exception)
+      catch (const exception&)
       {
         RCLCPP_ERROR_STREAM(this->get_logger(), "Failed to open K4A device at index " << i);
         continue;
@@ -775,7 +775,6 @@ void K4AROS2Device::framePublisherThread()
 {
   rclcpp::Rate loop_rate(this->get_parameter("fps").as_int());
 
-  k4a_wait_result_t wait_result;
   k4a_result_t result;
 
   std::shared_ptr<sensor_msgs::msg::CameraInfo> rgb_raw_camera_info = std::make_shared<sensor_msgs::msg::CameraInfo>();
@@ -1217,7 +1216,7 @@ void K4AROS2Device::imuPublisherThread()
     {
       // publish imu messages as long as the imu timestamp is less than the last capture timestamp to catch up to the
       // cameras compare signed with unsigned shouldn't cause a problem because timestamps should always be positive
-      while (last_imu_time_usec_ <= last_capture_time_usec_ && !imu_stream_end_of_file_)
+      while (static_cast<int64_t>(last_imu_time_usec_) <= last_capture_time_usec_ && !imu_stream_end_of_file_)
       {
         std::lock_guard<std::mutex> guard(k4a_playback_handle_mutex_);
         if (!k4a_playback_handle_.get_next_imu_sample(&sample))

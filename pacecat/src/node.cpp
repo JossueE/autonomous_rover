@@ -12,6 +12,7 @@
 BlueSeaLidarDriver *m_driver = NULL;
 void PublishLaserScanFan(rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr laser_pub, RawData *fan, std::string &frame_id, double min_dist, double max_dist, uint8_t inverted, uint8_t reversed)
 {
+	(void)inverted;
 	sensor_msgs::msg::LaserScan msg;
 	msg.header.stamp.sec = fan->ts[0];
 	msg.header.stamp.nanosec = fan->ts[1];

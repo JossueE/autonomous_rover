@@ -25,7 +25,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs)
 find_package(PkgConfig REQUIRED)
 
-message(WARNING "libmodbus-dev apt package MUST BE installed ...")
+message(STATUS "libmodbus-dev apt package MUST BE installed ...")
 pkg_check_modules(MODBUS REQUIRED IMPORTED_TARGET libmodbus)
 
 
