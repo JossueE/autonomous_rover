@@ -264,6 +264,10 @@ void pointcloud_roi_node::extractInitialSeeds(const pcl::PointCloud<pcl::PointXY
     filtered_cloud->points.assign(partition_point, cloud_in->points.end());
 
     // Step 3: Compute the LPR height by averaging the first 'num_lpr_' points in the filtered cloud
+    std::sort(filtered_cloud->points.begin(), filtered_cloud->points.end(), [](const pcl::PointXYZ &a, const pcl::PointXYZ &b) {
+        return a.z < b.z;
+    });
+
     double LPR_height = 0.0;
     int num_lpr = std::min(num_lpr_, static_cast<int>(filtered_cloud->points.size()));
     if (num_lpr == 0)

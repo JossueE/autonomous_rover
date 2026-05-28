@@ -10,7 +10,7 @@ class PacecatLidarCropNode : public rclcpp::Node
 {
 public:
   PacecatLidarCropNode()
-  : Node("pacecat_lidar_crop_node"), initialized_(false)
+  : Node("pacecat_lidar_crop_node")
   {
     declare_parameter<std::string>("input_topic", "scan_raw");
     declare_parameter<std::string>("output_topic", "scan");
@@ -37,47 +37,36 @@ public:
 private:
   void scan_callback(const LaserScan::SharedPtr msg)
   {
-    if (msg->ranges.empty()) {
-      RCLCPP_WARN(get_logger(), "Received empty LaserScan");
-      return;
-    }
-
-    if (!initialized_) {
-      count_ = msg->ranges.size();
-      angle_min_ = msg->angle_min;
-      angle_inc_ = msg->angle_increment;
-      initialized_ = true;
-    }
-
-    if (count_ == 0 || angle_inc_ == 0.0) {
-      RCLCPP_WARN(get_logger(), "Invalid scan data in callback");
+    const size_t count = msg->ranges.size();
+    if (count == 0 || msg->angle_increment == 0.0f) {
+      RCLCPP_WARN(get_logger(), "Received invalid or empty LaserScan");
       return;
     }
 
     const double half_limit = limit_angle_ / 2.0;
-    const double desired_min = centered_ ? -half_limit : angle_min_;
-    const double desired_max = centered_ ? half_limit : angle_min_ + limit_angle_;
+    const double desired_min = centered_ ? -half_limit : msg->angle_min;
+    const double desired_max = centered_ ? half_limit : msg->angle_min + limit_angle_;
 
-    int raw_start = static_cast<int>(std::round((desired_min - angle_min_) / angle_inc_));
-    int raw_end = static_cast<int>(std::round((desired_max - angle_min_) / angle_inc_));
+    int raw_start = static_cast<int>(std::round((desired_min - msg->angle_min) / msg->angle_increment));
+    int raw_end = static_cast<int>(std::round((desired_max - msg->angle_min) / msg->angle_increment));
 
-    raw_start = std::max(0, std::min(raw_start, static_cast<int>(count_)));
-    raw_end = std::max(0, std::min(raw_end, static_cast<int>(count_)));
+    raw_start = std::max(0, std::min(raw_start, static_cast<int>(count)));
+    raw_end = std::max(0, std::min(raw_end, static_cast<int>(count)));
 
     if (raw_start > raw_end) {
       std::swap(raw_start, raw_end);
     }
 
     LaserScan cropped = *msg;
-    cropped.ranges.assign(count_, static_cast<float>(pad_value_));
+    cropped.ranges.assign(count, static_cast<float>(pad_value_));
 
-    if (cropped.intensities.size() == count_) {
-      cropped.intensities.assign(count_, 0.0f);
+    if (cropped.intensities.size() == count) {
+      cropped.intensities.assign(count, 0.0f);
     }
 
     if (raw_start < raw_end) {
       std::copy_n(msg->ranges.begin() + raw_start, raw_end - raw_start, cropped.ranges.begin() + raw_start);
-      if (cropped.intensities.size() == count_) {
+      if (cropped.intensities.size() == count) {
         std::copy_n(msg->intensities.begin() + raw_start, raw_end - raw_start, cropped.intensities.begin() + raw_start);
       }
     }
@@ -92,10 +81,6 @@ private:
   double limit_angle_;
   bool centered_;
   double pad_value_;
-  bool initialized_;
-  size_t count_;
-  double angle_min_;
-  double angle_inc_;
 
   rclcpp::Subscription<LaserScan>::SharedPtr subscription_;
   rclcpp::Publisher<LaserScan>::SharedPtr publisher_;

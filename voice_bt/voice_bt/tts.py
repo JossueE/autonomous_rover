@@ -41,8 +41,9 @@ class PiperTTS:
             self._synthesize_and_play(text)
 
     def _synthesize_and_play(self, text: str):
-        tmp_path = tempfile.mkstemp(suffix=".wav")
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav")
         try:
+            os.close(fd)
             self._logger.info(f"TTS: {text}")
             proc = subprocess.run(
                 [self._piper_bin, "--model", self._piper_model,

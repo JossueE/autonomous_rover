@@ -50,8 +50,8 @@ class BilingualASR(threading.Thread):
         self._logger.info(f"[{lang}] '{text}' -> command={cmd} waypoint={wp}")
         # Set blackboard atomically: waypoint first, then command.
         if wp is not None:
-            self._bb.set("voice_bt/target_waypoint", wp)
-        self._bb.set("voice_bt/command", cmd)
+            self._bb.set("target_waypoint", wp)
+        self._bb.set("command", cmd)
 
     def run(self):
         self._logger.info("Starting bilingual ASR audio stream")
