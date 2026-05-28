@@ -1,22 +1,22 @@
 # Named waypoints for voice navigation.
 # Coordinates are in the `map` frame (same frame as /amcl_robot_pose).
 # Record them from RViz or by reading /amcl_robot_pose at the desired physical location.
-# `lanelet_id` must match the corresponding lanelet in the .osm map used by
-# path_planning_dynamic.
+# `osm_name` must match the corresponding lanelet `name` tag in the .osm map
+# used by path_planning_dynamic.
 
 waypoints:
   inicio:
-    lanelet_id: 0
+    osm_name: station1
     x: 0.0
     y: 0.0
     description: "el inicio"
   cochera:
-    lanelet_id: 1
+    osm_name: home
     x: 3.5
     y: 1.2
     description: "la cochera"
   shell:
-    lanelet_id: 2
+    osm_name: end
     x: 7.0
     y: 0.5
     description: "el shell"

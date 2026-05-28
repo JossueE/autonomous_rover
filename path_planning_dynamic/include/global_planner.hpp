@@ -35,6 +35,8 @@ private:
     double      waypoint_interval = 0.5;
     int         start_lanelet_id_ = 0;
     int         end_lanelet_id_   = 0;
+    std::string start_lanelet_name_;
+    std::string end_lanelet_name_;
     double      x_offset_         = 0.0;
     double      y_offset_         = 0.0;
     std::string map_path_;
@@ -140,6 +142,10 @@ private:
                                                       bool include_besides);
     static int                  indexInShortestPath(const routing::LaneletPath &path, lanelet::Id id);
     bool                        isInMainPath(lanelet::Id id) const;  // uses path_ids_ cache
+    bool                        resolveLaneletName(const lanelet::LaneletMapPtr &map,
+                                                   const std::string &lanelet_name,
+                                                   int &lanelet_id,
+                                                   const std::string &label) const;
 
     // ---------------------------------------------------------------
     // Occupancy grid helpers
@@ -152,7 +158,9 @@ private:
 
 public:
     GlobalPlanner(double x_offset, double y_offset, std::string map_path,
-                  int start_lanelet_id, int end_lanelet_id, double resolution,
+                  int start_lanelet_id, int end_lanelet_id,
+                  std::string start_lanelet_name, std::string end_lanelet_name,
+                  double resolution,
                   int close_radius, int close_iters, int outside_value,
                   std::string frame_id);
 

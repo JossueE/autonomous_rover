@@ -53,10 +53,11 @@ class MoveRover(py_trees.behaviour.Behaviour):
 
 
 class NavigateTo(py_trees.behaviour.Behaviour):
-    """Set `end_lanelet_id` on the path_planning_node via SetParameters.
+    """Set `end_lanelet_name` on the path_planning_node via SetParameters.
 
-    Reads target waypoint name from blackboard. Looks up the lanelet ID in the
-    waypoints dict. Fires the service call async and returns SUCCESS immediately.
+    Reads the target waypoint from the blackboard and sends its configured
+    `osm_name` to the planner. If `osm_name` is absent, the waypoint key itself
+    is used as the .osm lanelet `name` tag.
     """
 
     def __init__(self, ros_node, waypoints: dict,
@@ -81,13 +82,13 @@ class NavigateTo(py_trees.behaviour.Behaviour):
             self._node.get_logger().warn(f"NavigateTo: unknown waypoint '{wp_name}'")
             return py_trees.common.Status.FAILURE
 
-        lanelet_id = int(self._waypoints[wp_name]["lanelet_id"])
+        lanelet_name = str(self._waypoints[wp_name].get("osm_name", wp_name))
         req = SetParameters.Request()
         p = Parameter()
-        p.name = "end_lanelet_id"
+        p.name = "end_lanelet_name"
         p.value = ParameterValue(
-            type=ParameterType.PARAMETER_INTEGER,
-            integer_value=lanelet_id,
+            type=ParameterType.PARAMETER_STRING,
+            string_value=lanelet_name,
         )
         req.parameters = [p]
 
@@ -99,5 +100,5 @@ class NavigateTo(py_trees.behaviour.Behaviour):
 
         self._client.call_async(req)
         self._node.get_logger().info(
-            f"NavigateTo: set end_lanelet_id={lanelet_id} for waypoint '{wp_name}'")
+            f"NavigateTo: set end_lanelet_name='{lanelet_name}' for waypoint '{wp_name}'")
         return py_trees.common.Status.SUCCESS

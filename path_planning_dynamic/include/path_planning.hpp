@@ -6,6 +6,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 // path nav msgs
 #include <nav_msgs/msg/path.hpp>
@@ -157,12 +158,18 @@ private:
     double y_offset_;
     int start_lanelet_id_;
     int end_lanelet_id_;
+    std::string start_lanelet_name_;
+    std::string end_lanelet_name_;
 
     std::vector<point_struct> all_waypoints_from_global_planner_;  // waypoint with the central path and the neighbor lanelets
     visualization_msgs::msg::MarkerArray global_planner_markers_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr global_planner_publisher_;
     void publishGlobalPlanner();
     void publishGlobalPlannerOccupancyGrid();
+    void rebuildGlobalPlanner();
+    rcl_interfaces::msg::SetParametersResult onPlannerParameters(
+        const std::vector<rclcpp::Parameter> &params);
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_handler_;
     // =============================
     // map combination and convine with the map obstacles
     // =============================

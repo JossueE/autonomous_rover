@@ -212,13 +212,13 @@ def test_autonomous_navigation(test_env):
     bb.set("target_waypoint", "cochera")
     bb.set("command", "navigate")
 
-    # 2. Verify we transition to AUTONOMOUS mode and set lanelet ID = 1 (cochera lanelet_id)
+    # 2. Verify we transition to AUTONOMOUS mode and set the OSM lanelet name.
     assert wait_for(lambda: bb.get("mode") == "AUTONOMOUS")
     assert wait_for(lambda: len(sim.param_requests) > 0)
     
     param = sim.param_requests[-1].parameters[0]
-    assert param.name == "end_lanelet_id"
-    assert param.value.integer_value == 1
+    assert param.name == "end_lanelet_name"
+    assert param.value.string_value == "home"
 
     # 3. Simulate the robot reaching the target waypoint
     # Publish AMCL pose at the target location (cochera is at x=3.5, y=1.2)
@@ -252,14 +252,14 @@ def test_patrol_mode(test_env):
     # First waypoint in list (waypoints keys are: inicio, cochera, shell)
     # The list is sorted or retrieved as defined in load_waypoints.
     # Let's see the order. Waypoints in config/waypoints.yaml:
-    # 1. inicio (lanelet_id: 0, x: 0.0, y: 0.0)
-    # 2. cochera (lanelet_id: 1, x: 3.5, y: 1.2)
-    # 3. shell (lanelet_id: 2, x: 7.0, y: 0.5)
+    # 1. inicio (osm_name: station1, x: 0.0, y: 0.0)
+    # 2. cochera (osm_name: home, x: 3.5, y: 1.2)
+    # 3. shell (osm_name: end, x: 7.0, y: 0.5)
     # So waypoint names list = ['inicio', 'cochera', 'shell']
 
     # Wait for the service parameter to be set for the first waypoint (inicio)
     assert wait_for(lambda: len(sim.param_requests) > 0)
-    assert sim.param_requests[-1].parameters[0].value.integer_value == 0
+    assert sim.param_requests[-1].parameters[0].value.string_value == "station1"
 
     # 3. Simulate reaching 'inicio' waypoint
     sim.param_requests.clear()
@@ -269,10 +269,10 @@ def test_patrol_mode(test_env):
     pose_msg.pose.pose.position.y = 0.0
     sim.amcl_pub.publish(pose_msg)
 
-    # Verify that patrol index increments to 1, and it sets end_lanelet_id for the next waypoint (cochera, lanelet_id = 1)
+    # Verify that patrol index increments to 1, and it sets the next OSM lanelet name.
     assert wait_for(lambda: bb.get("patrol_index") == 1)
     assert wait_for(lambda: len(sim.param_requests) > 0)
-    assert sim.param_requests[-1].parameters[0].value.integer_value == 1
+    assert sim.param_requests[-1].parameters[0].value.string_value == "home"
 
     # 4. Inject stop command to cancel patrol
     sim.cmd_pub.publish(String(data="stop"))
