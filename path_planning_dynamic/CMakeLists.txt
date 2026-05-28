@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.8)
 project(path_planning_dynamic)
 
+if(POLICY CMP0144)
+  cmake_policy(SET CMP0144 NEW)
+endif()
+
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "Suppress dev warnings from third-party cmake modules")
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -109,14 +115,10 @@ ament_export_dependencies(
   polygon_msgs
 )
 
-rosidl_target_interfaces(path_planning_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
-rosidl_target_interfaces(pointcloud_clustering_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
-rosidl_target_interfaces(pointcloud_roi_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+target_link_libraries(path_planning_node "${cpp_typesupport_target}")
+target_link_libraries(pointcloud_clustering_node "${cpp_typesupport_target}")
+target_link_libraries(pointcloud_roi_node "${cpp_typesupport_target}")
 
 
 target_include_directories(pointcloud_clustering_node PUBLIC
@@ -124,17 +126,20 @@ target_include_directories(pointcloud_clustering_node PUBLIC
   $<INSTALL_INTERFACE:include>
   /usr/include/eigen3
 )
+target_include_directories(pointcloud_clustering_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 target_include_directories(path_planning_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   /usr/include/eigen3
 )
+target_include_directories(path_planning_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 target_include_directories(pointcloud_roi_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_include_directories(pointcloud_roi_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 
 link_directories(${PCL_LIBRARY_DIRS})

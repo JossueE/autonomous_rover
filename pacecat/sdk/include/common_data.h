@@ -33,7 +33,9 @@
 #define GS_PACK 0x4753
 #define S_PACK 0x0053
 #define C_PACK 0x0043
+#ifndef M_PI
 #define M_PI 3.1415926535898
+#endif
 #define getbit(x, y) ((x) >> (y)&1) // 获取X的Y位置数据
 #define setbit(x, y) x |= (1 << y)	// 将X的第Y位置1
 #define clrbit(x, y) x &= ~(1 << y) // 将X的第Y位清0
