@@ -22,10 +22,19 @@ path_planning_node:
     tree_depth: 7                     # Maximum depth of the A* search tree for local path planning.
     branching_factor: 5               # Number of possible branches (actions/commands) per tree level.
     map_path: package://rover_bringup/maps/test1.osm # Path to the Lanelet2 (.osm) map file.
-    start_lanelet_id: 108             # ID of the starting lanelet for the global planner.
-    end_lanelet_id: 95                # ID of the goal lanelet for the global planner.
+    start_lanelet_id: 108             # Fallback ID of the starting lanelet for the global planner.
+    end_lanelet_id: 95                # Fallback ID of the goal lanelet for the global planner.
+    start_lanelet_name: "home"    # Preferred .osm lanelet tag name. Empty string falls back to start_lanelet_id.
+
+    # 37: station1
+    # 59: station3
+    # 65: home
+    # 93: end
+    # 104: station2
+
+    end_lanelet_name: "station1"          # Preferred .osm lanelet tag name. Empty string falls back to end_lanelet_id.
     x_offset: 0.0                     # X offset to align map and robot frame (m).
-    y_offset: 1.0                     # Y offset to align map and robot frame (m).
+    y_offset: 0.0                     # Y offset to align map and robot frame (m).
     z_offset: -2.10                   # Z offset applied to TF pose to match lanelet map z projection. Was hardcoded -2.10 in source.
     pose_frame: "base_footprint"      # TF frame used to estimate the planner pose in the map frame.
     global_planner_resolution: 0.05         # Resolution of the global planner grid (m).

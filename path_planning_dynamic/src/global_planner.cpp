@@ -16,11 +16,15 @@ using lanelet::Optional;
 // Constructor
 // ===================================================================
 GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_path,
-                             int start_lanelet_id, int end_lanelet_id, double resolution,
+                             int start_lanelet_id, int end_lanelet_id,
+                             std::string start_lanelet_name, std::string end_lanelet_name,
+                             double resolution,
                              int close_radius, int close_iters, int outside_value,
                              std::string frame_id)
     : start_lanelet_id_(start_lanelet_id),
       end_lanelet_id_(end_lanelet_id),
+      start_lanelet_name_(std::move(start_lanelet_name)),
+      end_lanelet_name_(std::move(end_lanelet_name)),
       x_offset_(x_offset),
       y_offset_(y_offset),
       map_path_(std::move(map_path)),
@@ -83,6 +87,17 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
                   << " point(s) lacking local_x/local_y." << reset << std::endl;
     }
 
+    if (!start_lanelet_name_.empty() &&
+        !resolveLaneletName(map, start_lanelet_name_, start_lanelet_id_, "start_lanelet_name"))
+    {
+        return;
+    }
+    if (!end_lanelet_name_.empty() &&
+        !resolveLaneletName(map, end_lanelet_name_, end_lanelet_id_, "end_lanelet_name"))
+    {
+        return;
+    }
+
     map_routing(map);
     generateOccupancyGrid(map);
     // C7: do NOT unconditionally set occupancy_grid_ready_ = true here;
@@ -137,6 +152,28 @@ int GlobalPlanner::indexInShortestPath(const routing::LaneletPath &path, lanelet
 bool GlobalPlanner::isInMainPath(lanelet::Id id) const
 {
     return path_ids_.count(id) > 0;
+}
+
+bool GlobalPlanner::resolveLaneletName(const lanelet::LaneletMapPtr &map,
+                                       const std::string &lanelet_name,
+                                       int &lanelet_id,
+                                       const std::string &label) const
+{
+    for (const auto &ll : map->laneletLayer)
+    {
+        if (ll.hasAttribute("name") &&
+            ll.attribute("name").value() == lanelet_name)
+        {
+            lanelet_id = static_cast<int>(ll.id());
+            std::cout << green << "[GlobalPlanner] " << label << "='" << lanelet_name
+                      << "' resolved to lanelet_id=" << lanelet_id << reset << std::endl;
+            return true;
+        }
+    }
+
+    std::cerr << red << "[GlobalPlanner] Could not find lanelet with name='"
+              << lanelet_name << "' for " << label << reset << std::endl;
+    return false;
 }
 
 // ===================================================================

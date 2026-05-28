@@ -176,7 +176,7 @@ ros2 launch rover_bringup hardware_bringup.launch.py
 
 ros2 launch rover_bringup k4a_rtabmap.launch.py mode:=localization
 
-
+ros2 launch path_planning_dynamic planning.launch.py
 
 # Don not use
 rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
