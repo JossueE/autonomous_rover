@@ -32,7 +32,7 @@ setup(
         # Piper executable must be installed with execute permission; colcon copies it.
         *recursive_data_files('voice_assets', 'voice_assets'),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'sounddevice', 'vosk'],
     zip_safe=True,
     maintainer='ggm',
     maintainer_email='gusgarciarrealm@gmail.com',

@@ -14,6 +14,8 @@
   <depend>std_srvs</depend>
   <depend>py_trees</depend>
   <depend>py_trees_ros</depend>
+  <exec_depend>python3-sounddevice</exec_depend>
+  <exec_depend>python3-vosk</exec_depend>
 
   <test_depend>pytest</test_depend>
 
