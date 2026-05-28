@@ -15,11 +15,18 @@ using namespace std::chrono_literals;
 
 class WitmotionImuNode : public rclcpp::Node {
 public:
-    WitmotionImuNode(const std::string & port) : Node("witmotion_imu_node"), port_(port), serial_fd_(-1) {
+    WitmotionImuNode(const std::string & port = "") : Node("witmotion_imu_node"), serial_fd_(-1) {
         
+        this->declare_parameter<std::string>("port", "/dev/ttyUSB0");
         this->declare_parameter<int>("baudrate", 115200);
         this->declare_parameter<std::string>("frame_id", "imu_link");
         
+        if (!port.empty()) {
+            port_ = port;
+            this->set_parameter(rclcpp::Parameter("port", port));
+        } else {
+            port_ = this->get_parameter("port").as_string();
+        }
         baudrate_ = this->get_parameter("baudrate").as_int();
         frame_id_ = this->get_parameter("frame_id").as_string();
 
@@ -133,6 +140,17 @@ private:
                     continue;
                 }
 
+                // Checksum is the sum of the first 10 bytes compared with the 11th byte
+                uint8_t sum = 0;
+                for (int i = 0; i < 10; ++i) {
+                    sum += data_buffer_[i];
+                }
+                if (sum != data_buffer_[10]) {
+                    // Checksum failed! Erase the first byte and search for the next 0x55
+                    data_buffer_.erase(data_buffer_.begin());
+                    continue;
+                }
+
                 uint8_t frame_type = data_buffer_[1];
                 parse_packet(frame_type, &data_buffer_[2]);
 
@@ -146,12 +164,12 @@ private:
 };
 
 int main(int argc, char * argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: ros2 run odometry2 witmotion_imu_node /dev/ttyUSBX\n");
-        return 1;
-    }
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<WitmotionImuNode>(argv[1]));
+    std::string port = "";
+    if (argc >= 2) {
+        port = argv[1];
+    }
+    rclcpp::spin(std::make_shared<WitmotionImuNode>(port));
     rclcpp::shutdown();
     return 0;
 }

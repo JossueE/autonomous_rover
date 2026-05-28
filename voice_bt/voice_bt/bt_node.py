@@ -5,6 +5,7 @@ thread. Ticks the tree at a fixed rate.
 """
 
 import os
+import queue
 import time
 
 import rclpy
@@ -143,9 +144,10 @@ class VoiceBTNode(Node):
                 pass
 
         # ─── ASR thread ───
+        self._cmd_queue = queue.Queue()
         self._asr = BilingualASR(
             logger=self.get_logger(),
-            blackboard=_BBWriter(),
+            blackboard=_BBWriter(self._cmd_queue),
             es_model_path=self.get_parameter("vosk_model_es").value,
             en_model_path=self.get_parameter("vosk_model_en").value,
             waypoint_names=list(self._waypoints.keys()),
@@ -181,6 +183,16 @@ class VoiceBTNode(Node):
     # ─── BT tick ─────────────────────────────────────────────────────────
 
     def _tick(self):
+        # Drain the ASR command queue and write to the blackboard on the main thread
+        while not self._cmd_queue.empty():
+            try:
+                key, val = self._cmd_queue.get_nowait()
+                self._bb.set(key, val)
+                if key == "command":
+                    self.get_logger().info(f"Main thread: Blackboard key '{key}' set to '{val}'")
+            except queue.Empty:
+                break
+
         try:
             self._tree.tick()
         except Exception as e:
@@ -439,15 +451,13 @@ class VoiceBTNode(Node):
 
 
 class _BBWriter:
-    """Tiny blackboard-write client used by the ASR thread."""
+    """Tiny queue-based writer client used by the ASR thread."""
 
-    def __init__(self):
-        self._client = py_trees.blackboard.Client(name="asr_writer")
-        for key in ("command", "target_waypoint"):
-            self._client.register_key(key=key, access=py_trees.common.Access.WRITE)
+    def __init__(self, q):
+        self._q = q
 
     def set(self, key, value):
-        self._client.set(key, value)
+        self._q.put((key, value))
 
 
 def main():

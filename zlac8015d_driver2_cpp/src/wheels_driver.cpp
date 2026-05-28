@@ -16,7 +16,24 @@ std::string node_name = "wheels_driver";
 
 class ZlacNode : public rclcpp::Node {
 public:
-  ZlacNode(const std::string &port) : Node(node_name), port_(port) {
+  ZlacNode(const std::string &port = "") 
+      : Node(node_name), 
+        port_([this, &port]() {
+          this->declare_parameter<std::string>("port", "/dev/ttyUSB0");
+          if (!port.empty()) {
+            this->set_parameter(rclcpp::Parameter("port", port));
+            return port;
+          }
+          return this->get_parameter("port").as_string();
+        }()) {
+
+    // Validate if port exists
+    if (access(port_.c_str(), F_OK) != 0) {
+      RCLCPP_FATAL(this->get_logger(), "Port %s does not exist", port_.c_str());
+      rclcpp::shutdown();
+      return;
+    }
+    RCLCPP_INFO(this->get_logger(), "Port: %s", port_.c_str());
 
     // Wheels configuration parameters
     this->declare_parameter<bool>("wheelR_is_backward", false);
@@ -474,24 +491,11 @@ private:
 
 
 int main(int argc, char * argv[]) {
-  auto logger = rclcpp::get_logger(node_name);
-
+  rclcpp::init(argc, argv);
   std::string port = "";
-
   if (argc >= 2) {
     port = argv[1];
-    // Validate if port exists
-    if (access(port.c_str(), F_OK) != 0) {
-      RCLCPP_ERROR(logger, "Port %s does not exist", port.c_str());
-      return 1;
-    }
-    RCLCPP_INFO(logger, "Port: %s", port.c_str());
-  }else{
-    RCLCPP_ERROR(logger, "No argument given. Usage: \n$ ros2 run <package_name> <node_name> <port>");
-    return 1;
   }
-
-  rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<ZlacNode>(port));
   rclcpp::shutdown();
   return 0;
