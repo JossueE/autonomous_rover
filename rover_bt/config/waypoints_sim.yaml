@@ -1,0 +1,30 @@
+# Simulation waypoints for the Gazebo `depot` world + test_simulation.osm map.
+#
+# Coordinates are in the MAP frame, taken directly from the lanelet `local_x`/
+# `local_y` attributes of test_simulation.osm (the same values the path planner
+# uses internally — it overwrites the projected lat/lon with local_x/local_y).
+# Each `lanelet` matches a named lanelet in that map so the planner can build a
+# global route to it; `theta` is the lanelet's travel heading.
+#
+# These are sim-only and intentionally separate from the shared
+# config/waypoints.yaml so the real-robot path is untouched. Selected via the
+# `dynamic_waypoints_file` param in rover_bt_sim.launch.py.
+waypoints:
+  cocina:
+    x: 11.16
+    y: 1.49
+    theta: -1.5708
+    lanelet: "cocina"
+    frame: "map"
+  fin:
+    x: -14.04
+    y: 0.62
+    theta: 1.5708
+    lanelet: "fin"
+    frame: "map"
+  inicio:
+    x: 0.14
+    y: 0.76
+    theta: -1.5708
+    lanelet: "inicio"
+    frame: "map"

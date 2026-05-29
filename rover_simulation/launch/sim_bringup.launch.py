@@ -24,7 +24,7 @@ from launch.actions import (
     TimerAction,
     LogInfo,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command,
@@ -69,6 +69,19 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "use_rviz", default_value="true",
             description="Launch RViz2"),
+        # map -> odom placement (sim localization stand-in; see static_map_odom_tf).
+        # Defaults put the robot at the start of the "inicio" lanelet of
+        # test_simulation.osm, facing along it, so the planner has a valid pose
+        # on the route. Values are map-frame coords from the lanelet local_x/local_y.
+        DeclareLaunchArgument(
+            "map_odom_x", default_value="0.14",
+            description="map->odom x: places the robot on the start lanelet (map frame)"),
+        DeclareLaunchArgument(
+            "map_odom_y", default_value="1.67",
+            description="map->odom y: places the robot on the start lanelet (map frame)"),
+        DeclareLaunchArgument(
+            "map_odom_yaw", default_value="-1.5708",
+            description="map->odom yaw: aligns robot heading with the start lanelet"),
     ]
 
     use_sim_time = LaunchConfiguration("use_sim_time")
@@ -80,6 +93,9 @@ def generate_launch_description():
     use_planning = LaunchConfiguration("use_planning")
     use_voice_bt = LaunchConfiguration("use_voice_bt")
     use_rviz     = LaunchConfiguration("use_rviz")
+    map_odom_x   = LaunchConfiguration("map_odom_x")
+    map_odom_y   = LaunchConfiguration("map_odom_y")
+    map_odom_yaw = LaunchConfiguration("map_odom_yaw")
 
     # ── 1. Robot State Publisher ─────────────────────────────────────────────
     # Uses minibase_sim.xacro which includes minibase_urdf.xacro with sim:=true.
@@ -237,13 +253,56 @@ def generate_launch_description():
     # can be given the simulation pointcloud topic (/depth_camera/points).
     planning_params = os.path.join(pkg_planning, "config", "params.yaml")
 
+    # The lanelet2 loader (lanelet::load) does not understand "package://" URIs,
+    # so the shared params.yaml map_path fails to load in any environment.
+    # Override with a resolved absolute path to the simulation map for sim runs.
+    sim_map_path = os.path.join(
+        get_package_share_directory("rover_bringup"),
+        "maps", "test_simulation.osm",
+    )
+
     path_planner_node = Node(
         package="path_planning_dynamic",
         executable="path_planning_node",
         name="path_planning_node",
         output="screen",
-        parameters=[planning_params, {"use_sim_time": use_sim_time}],
+        parameters=[
+            planning_params,
+            {
+                "use_sim_time": use_sim_time,
+                "map_path": sim_map_path,
+                # The shared params.yaml names ("home"/"station1") do not exist in
+                # test_simulation.osm. Its named lanelets are inicio/cocina/fin, so
+                # override here (sim-only) — otherwise resolveLaneletName fails and
+                # the planner falls back to nonexistent IDs and builds no route.
+                "start_lanelet_name": "inicio",
+                "end_lanelet_name": "cocina",
+            },
+        ],
         condition=IfCondition(use_planning),
+    )
+
+    # Static map -> odom transform (sim localization stand-in).
+    # The sim EKF runs with world_frame=odom, so it only publishes odom ->
+    # base_footprint; nothing publishes the "map" frame. The path planner does
+    # lookupTransform("map", base_footprint) every cycle, so without this the
+    # lookup throws, the robot pose is never valid, and no trajectory is ever
+    # produced. This static transform places the odom origin (robot spawn) onto
+    # the start lanelet of the map so the planner has a pose on the route.
+    # Disabled when use_rtabmap:=true, since RTAB-Map (SLAM) then publishes a
+    # real map -> odom and a static one would conflict.
+    static_map_odom_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="static_map_odom_tf",
+        output="screen",
+        arguments=[
+            "--x", map_odom_x, "--y", map_odom_y, "--z", "0.0",
+            "--yaw", map_odom_yaw, "--pitch", "0.0", "--roll", "0.0",
+            "--frame-id", "map", "--child-frame-id", "odom",
+        ],
+        parameters=[{"use_sim_time": use_sim_time}],
+        condition=UnlessCondition(use_rtabmap),
     )
 
     pointcloud_clustering_node = Node(
@@ -327,6 +386,7 @@ def generate_launch_description():
             ekf_node,
             rtabmap_launch,
             point_cloud_xyz_node,
+            static_map_odom_tf,
             path_planner_node,
             pointcloud_clustering_node,
             pointcloud_roi_node,
