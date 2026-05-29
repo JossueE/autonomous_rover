@@ -156,7 +156,10 @@ void pointcloud_clustering_node::pointCloudCallback(const sensor_msgs::msg::Poin
 
     if (input_cloud->empty())
     {
-        warnUnsafePerception("Received empty point cloud; no obstacle update published.");
+        // No obstacle points in view (e.g. facing open floor). Report an empty
+        // obstacle set rather than going silent, so the planner keeps planning
+        // on the base lanelet map instead of stalling.
+        publishEmptyObstacles();
         return;
     }
 
@@ -184,7 +187,9 @@ void pointcloud_clustering_node::pointCloudCallback(const sensor_msgs::msg::Poin
         }
         else
         {
-            warnUnsafePerception("No valid clusters detected; no obstacle update published.");
+            // Cloud had points but none clustered into obstacles: still tell the
+            // planner "no obstacles" so it continues planning on the base map.
+            publishEmptyObstacles();
         }
     }
     catch (const std::exception &e)
@@ -357,6 +362,14 @@ void pointcloud_clustering_node::concave_hull(const std::vector<pcl::PointCloud<
 void pointcloud_clustering_node::warnUnsafePerception(const std::string &warning_message)
 {
     RCLCPP_WARN(this->get_logger(), "%s%s%s", kRed, warning_message.c_str(), kReset);
+}
+
+void pointcloud_clustering_node::publishEmptyObstacles()
+{
+    obstacle_collection.obstacles.clear();
+    obstacle_collection.header.stamp = this->now();
+    obstacle_collection.header.frame_id = FRAME_ID;
+    obstacle_info_publisher_->publish(obstacle_collection);
 }
 
 
