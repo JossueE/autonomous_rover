@@ -1058,8 +1058,32 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
     const int D = std::max(0, tree_depth);
     const int EFFECTIVE_DEPTH = (D > 0) ? (D - 1) : 0;
 
-    const double cs0 = std::cos(root_state.heading);
-    const double ss0 = std::sin(root_state.heading);
+    // Anchor the forward/lateral/heading cost to the GLOBAL ROUTE tangent near
+    // the robot instead of the robot's (possibly misaligned) current heading.
+    // The previous behaviour froze the reference at root_state.heading, so any
+    // route that started behind/beside the robot incurred a forward+heading
+    // penalty with no offsetting reward — the best leaf collapsed back to the
+    // root pose and the robot never turned to pick the route up. Using the
+    // nearest priority-1 (centerline) waypoint's heading lets the planner choose
+    // in-place rotation to align with the route. Falls back to the robot heading
+    // when no route waypoints are available.
+    double ref_heading = root_state.heading;
+    if (use_waypoints) {
+        double best_d2 = std::numeric_limits<double>::infinity();
+        for (const auto& wp : all_waypoints_from_global_planner_) {
+            if (wp.priority != 1) continue;   // priority-1 = main centerline
+            const double ddx = wp.x - root_state.x;
+            const double ddy = wp.y - root_state.y;
+            const double d2 = ddx * ddx + ddy * ddy;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                ref_heading = wp.heading;
+            }
+        }
+    }
+
+    const double cs0 = std::cos(ref_heading);
+    const double ss0 = std::sin(ref_heading);
 
     size_t max_nodes = 1;
     size_t powB = 1;
@@ -1223,7 +1247,7 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
             const double dy = fn.state.y - root_state.y;
             const double lateral = -dx * ss0 + dy * cs0;
             const double head_err =
-                std::fabs(wrapAngle(fn.state.heading - root_state.heading));
+                std::fabs(wrapAngle(fn.state.heading - ref_heading));
 
             const double total =
                 g + W_LAT * std::fabs(lateral) + W_HEAD * head_err;
@@ -1258,7 +1282,7 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
             const double dy = fn.state.y - root_state.y;
             const double lateral = -dx * ss0 + dy * cs0;
             const double head_err =
-                std::fabs(wrapAngle(fn.state.heading - root_state.heading));
+                std::fabs(wrapAngle(fn.state.heading - ref_heading));
 
             const double total =
                 g + W_LAT * std::fabs(lateral) + W_HEAD * head_err;

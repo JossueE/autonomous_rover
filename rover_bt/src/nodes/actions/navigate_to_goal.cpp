@@ -150,9 +150,22 @@ BT::NodeStatus NavigateToGoal::onRunning() {
 void NavigateToGoal::onHalted() {
   std::shared_ptr<SharedContext> ctx;
   if (config().blackboard->get("context", ctx) && ctx && ctx->node) {
-    RCLCPP_INFO(ctx->node->get_logger(), "NavigateToGoal: Navigation halted. Canceling action goal.");
-    if (action_client_ && goal_handle_) {
-      action_client_->async_cancel_goal(goal_handle_);
+    // Only cancel a goal that is still active. After a goal reaches a terminal
+    // state (succeeded/failed), the supervising ReactiveFallback halts this node
+    // (e.g. GoalReached fires on the next tick) and onHalted runs — but the goal
+    // handle is no longer known to the action client, so async_cancel_goal would
+    // throw rclcpp_action's "Goal handle is not known to this client", crashing
+    // the whole BT node. Skip cancellation for already-terminal goals, and guard
+    // the live-cancel path defensively so a late state transition can't abort us.
+    if (action_client_ && goal_handle_ &&
+        !goal_completed_.load() && !goal_failed_.load()) {
+      RCLCPP_INFO(ctx->node->get_logger(), "NavigateToGoal: Navigation halted. Canceling action goal.");
+      try {
+        action_client_->async_cancel_goal(goal_handle_);
+      } catch (const std::exception& e) {
+        RCLCPP_WARN(ctx->node->get_logger(),
+                    "NavigateToGoal: cancel on halt skipped: %s", e.what());
+      }
     }
   }
   config().blackboard->set("nav_status", std::string("idle"));

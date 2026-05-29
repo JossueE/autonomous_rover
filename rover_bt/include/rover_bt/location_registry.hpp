@@ -24,6 +24,7 @@ public:
   ~LocationRegistry() = default;
 
   void loadFromYaml(const std::string& path);
+  void loadFromOsm(const std::string& path);
   bool save(const std::string& name, double x, double y, double theta, const std::string& lanelet = "");
   std::optional<Location> find(const std::string& name) const;
   std::vector<std::string> allNames() const;
