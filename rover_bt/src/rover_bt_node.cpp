@@ -88,6 +88,11 @@ void RoverBTNode::init_subsystems() {
   location_registry_ = std::make_unique<LocationRegistry>();
   location_registry_->loadFromYaml(waypoints_file);
 
+  std::string osm_map = this->get_parameter("lanelet2_map").as_string();
+  if (!osm_map.empty()) {
+    location_registry_->loadFromOsm(osm_map);
+  }
+
   std::string piper_bin = this->get_parameter("piper_bin").as_string();
   std::string piper_model = this->get_parameter("piper_model").as_string();
   bool tts_enabled = this->get_parameter("tts_enabled").as_bool();
