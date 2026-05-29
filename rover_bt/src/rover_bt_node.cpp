@@ -64,7 +64,16 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("piper_model", "");
   this->declare_parameter("lanelet2_map", "");
   this->declare_parameter("dynamic_waypoints_file", "");
-  this->declare_parameter("patrol_waypoints", std::vector<std::string>());
+  // patrol_waypoints: declared with dynamic typing so it tolerates being set
+  // (or left empty) from YAML/launch. NOTE: an *empty* YAML list
+  // (patrol_waypoints: []) loads as PARAMETER_NOT_SET and aborts the node, so
+  // the shared param file leaves it unset rather than [] — see rover_bt_params.yaml.
+  {
+    rcl_interfaces::msg::ParameterDescriptor desc;
+    desc.dynamic_typing = true;
+    this->declare_parameter("patrol_waypoints",
+                            rclcpp::ParameterValue(std::vector<std::string>()), desc);
+  }
 }
 
 void RoverBTNode::init_subsystems() {
@@ -94,8 +103,19 @@ void RoverBTNode::init_subsystems() {
   ctx_->location_registry = location_registry_.get();
   ctx_->tts = tts_.get();
 
-  // Load patrol waypoints from parameters
-  std::vector<std::string> patrol_wps = this->get_parameter("patrol_waypoints").as_string_array();
+  // Load patrol waypoints from parameters.
+  // An empty YAML list (patrol_waypoints: []) is loaded as PARAMETER_NOT_SET,
+  // so as_string_array() would throw. Guard against that and treat it as empty.
+  std::vector<std::string> patrol_wps;
+  {
+    const auto& p = this->get_parameter("patrol_waypoints");
+    if (p.get_type() == rclcpp::ParameterType::PARAMETER_STRING_ARRAY) {
+      patrol_wps = p.as_string_array();
+    } else if (p.get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+      RCLCPP_WARN(this->get_logger(),
+                  "patrol_waypoints has unexpected type; ignoring (treating as empty).");
+    }
+  }
   ctx_->patrol_waypoints = patrol_wps;
 }
 
@@ -195,16 +215,108 @@ void RoverBTNode::init_behavior_tree() {
   blackboard->set("patrol_index", -1);
   blackboard->set("patrol_waypoint", std::string(""));
   blackboard->set("recovery_attempted", false);
+  blackboard->set("active_command_source", std::string(""));
+  blackboard->set("goal_distance", -1.0);
+
+  // Cache stale timeouts for status reporting
+  lidar_stale_timeout_  = this->get_parameter("lidar_stale_timeout").as_double();
+  camera_stale_timeout_ = this->get_parameter("camera_stale_timeout").as_double();
+  odom_stale_timeout_   = this->get_parameter("odom_stale_timeout").as_double();
+  imu_stale_timeout_    = this->get_parameter("imu_stale_timeout").as_double();
+  motor_stale_timeout_  = this->get_parameter("motor_stale_timeout").as_double();
 
   // Tick timer (10Hz)
   double tick_rate = this->get_parameter("bt_tick_rate").as_double();
   auto period = std::chrono::duration<double>(1.0 / tick_rate);
   tick_timer_ = this->create_wall_timer(period, std::bind(&RoverBTNode::tick_tree, this));
+
+  // Status publication timer (~1 Hz)
+  status_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(1000), std::bind(&RoverBTNode::publish_status, this));
 }
 
 void RoverBTNode::tick_tree() {
   // Tick tree exactly once
   tree_.tickExactlyOnce();
+}
+
+namespace {
+// Build a SensorHealth entry from the last-seen timestamp.
+rover_bt::msg::SensorHealth make_health(
+    const std::string& name, double last_seen, double now, double timeout) {
+  rover_bt::msg::SensorHealth h;
+  h.name = name;
+  if (last_seen <= 0.0) {
+    // No data ever received (startup grace period).
+    h.status = rover_bt::msg::SensorHealth::STALE;
+    h.last_seen_ago = -1.0f;
+    h.detail = "no data yet";
+    return h;
+  }
+  double ago = now - last_seen;
+  h.last_seen_ago = static_cast<float>(ago);
+  if (ago <= timeout) {
+    h.status = rover_bt::msg::SensorHealth::OK;
+    h.detail = "ok";
+  } else {
+    h.status = rover_bt::msg::SensorHealth::STALE;
+    h.detail = "stale";
+  }
+  return h;
+}
+}  // namespace
+
+void RoverBTNode::publish_status() {
+  if (!tree_.rootNode()) {
+    return;
+  }
+  auto bb = tree_.rootBlackboard();
+
+  rover_bt::msg::RoverStatus msg;
+  msg.stamp = this->now();
+
+  std::string mode = "IDLE";
+  (void)bb->get("mode", mode);
+  msg.mode = mode;
+
+  std::string source = "";
+  (void)bb->get("active_command_source", source);
+  msg.active_command_source = source;
+
+  std::string nav_status = "idle";
+  (void)bb->get("nav_status", nav_status);
+  msg.navigation_status = nav_status;
+
+  double goal_distance = -1.0;
+  (void)bb->get("goal_distance", goal_distance);
+  msg.goal_distance = static_cast<float>(goal_distance);
+
+  std::string target = "";
+  (void)bb->get("target_location", target);
+  msg.target_location = target;
+
+  bool is_mapping = false;
+  (void)bb->get("is_mapping", is_mapping);
+  msg.is_mapping = is_mapping;
+
+  std::string mapping_mode = "off";
+  (void)bb->get("mapping_mode", mapping_mode);
+  msg.mapping_mode = mapping_mode;
+
+  // Sensor health, using the same clock the watchdogs use.
+  double now = this->get_clock()->now().seconds();
+  msg.sensor_health.push_back(
+    make_health("odom",   ctx_->last_odom_time.load(),   now, odom_stale_timeout_));
+  msg.sensor_health.push_back(
+    make_health("lidar",  ctx_->last_lidar_time.load(),  now, lidar_stale_timeout_));
+  msg.sensor_health.push_back(
+    make_health("camera", ctx_->last_camera_time.load(), now, camera_stale_timeout_));
+  msg.sensor_health.push_back(
+    make_health("imu",    ctx_->last_imu_time.load(),    now, imu_stale_timeout_));
+  msg.sensor_health.push_back(
+    make_health("motor",  ctx_->last_motor_time.load(),  now, motor_stale_timeout_));
+
+  status_pub_->publish(msg);
 }
 
 // ─── Callbacks ────────────────────────────────────────────────────────
