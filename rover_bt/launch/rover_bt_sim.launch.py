@@ -32,6 +32,17 @@ def generate_launch_description():
             default_value='info',
             description='Logging level'),
 
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='true',
+            description='Use the /clock topic for time (required in simulation)'),
+
+        DeclareLaunchArgument(
+            'dynamic_waypoints_file',
+            default_value=os.path.join(pkg_dir, 'config', 'waypoints_sim.yaml'),
+            description='Named locations (map frame) the BT can navigate to. '
+                        'Defaults to the sim waypoints matched to test_simulation.osm.'),
+
         # ── rover_bt_node (sim overrides) ──
         Node(
             package='rover_bt',
@@ -41,6 +52,17 @@ def generate_launch_description():
             parameters=[
                 LaunchConfiguration('params_file'),
                 {'tree_xml': LaunchConfiguration('tree_xml')},
+                # Sim uses the Gazebo /clock; without this every sensor stamp
+                # (sim time) is compared against wall-clock now(), so the
+                # watchdogs see ~1.7e9 s of staleness and the odom critical
+                # gate latches EMERGENCY forever.
+                {'use_sim_time': LaunchConfiguration('use_sim_time')},
+                # Sim locations the BT can navigate to. The shared params file
+                # leaves dynamic_waypoints_file empty (registry would be empty,
+                # so every "navigate <place>" fails as unknown). Point it at the
+                # sim waypoints whose coords/lanelets match test_simulation.osm.
+                {'dynamic_waypoints_file':
+                    LaunchConfiguration('dynamic_waypoints_file')},
                 # Simulation topic overrides
                 {'pointcloud_topic': '/depth_camera/points'},
                 {'rtabmap_rgb_topic': '/depth_camera/image'},
@@ -60,6 +82,7 @@ def generate_launch_description():
             name='voice_command_node',
             output='screen',
             parameters=[{
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'vosk_model_es': os.path.join(pkg_voice_bt, 'voice_assets', 'model_es'),
                 'vosk_model_en': os.path.join(pkg_voice_bt, 'voice_assets', 'model_en'),
                 'waypoints_file': os.path.join(pkg_dir, 'config', 'waypoints.yaml'),
