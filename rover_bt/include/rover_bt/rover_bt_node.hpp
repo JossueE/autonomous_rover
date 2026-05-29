@@ -64,6 +64,9 @@ private:
   // Timer Tick
   void tick_tree();
 
+  // Periodic status publication (~1 Hz)
+  void publish_status();
+
   // BT Components
   BT::BehaviorTreeFactory factory_;
   BT::Tree tree_;
@@ -94,6 +97,14 @@ private:
 
   // Timers
   rclcpp::TimerBase::SharedPtr tick_timer_;
+  rclcpp::TimerBase::SharedPtr status_timer_;
+
+  // Cached stale timeouts for sensor-health reporting
+  double lidar_stale_timeout_{5.0};
+  double camera_stale_timeout_{5.0};
+  double odom_stale_timeout_{3.0};
+  double imu_stale_timeout_{5.0};
+  double motor_stale_timeout_{5.0};
 };
 
 }  // namespace rover_bt

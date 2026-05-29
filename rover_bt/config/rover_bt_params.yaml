@@ -59,4 +59,8 @@ rover_bt_node:
     teleop_turn_duration: 1.5                   # seconds
 
     # ── Patrol ──
-    patrol_waypoints: []                        # ordered list of location names
+    # Ordered list of location names, e.g. ["cocina", "sala"].
+    # Leave this line commented out for "no patrol": an empty YAML list
+    # (patrol_waypoints: []) loads as PARAMETER_NOT_SET and aborts the node
+    # at startup, so do not use []. The node defaults to an empty list.
+    # patrol_waypoints: ["cocina"]
