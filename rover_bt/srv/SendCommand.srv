@@ -1,0 +1,7 @@
+# External command injection (GUI, ROS API)
+string source    # gui, ros_service
+string command   # navigate, stop, patrol, etc.
+string target    # waypoint name (optional)
+---
+bool accepted
+string message
