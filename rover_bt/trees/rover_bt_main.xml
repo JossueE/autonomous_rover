@@ -1,14 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <root BTCPP_format="4" main_tree_to_execute="RoverBTMain">
   <BehaviorTree ID="RoverBTMain">
-    <!-- 
-      Parallel root: all children tick every cycle.
-      SUCCESS_ON_ALL: tree succeeds only if all children succeed.
-      FAILURE_ON_ONE: any child failure = tree failure (triggers safety).
+    <!--
+      ReactiveSequence root: re-ticks EVERY child from the top on each cycle,
+      even while a later layer (the mode dispatch) is RUNNING. This is required
+      so the Safety, Health and Command-arbitration layers keep running while a
+      mode subtree holds a long-running action (NavigateToGoal / MoveRover).
+      A plain Parallel here latched completed (SUCCESS) children and stopped
+      re-ticking them whenever ModeDispatch returned RUNNING — which froze the
+      odom e-stop and command arbitration for the entire duration of any
+      navigation or teleop move. Each layer returns SUCCESS in normal
+      operation, so the sequence always reaches ModeDispatch.
     -->
-    <Parallel name="RoverBTRoot"
-              success_count="-1"
-              failure_count="1">
+    <ReactiveSequence name="RoverBTRoot">
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 0: COMMAND ARBITRATION (must precede Safety)  -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Parse the winning command into the blackboard BEFORE the safety gate
+           so an emergency_stop command is seen by EmergencyGate on the same
+           tick. If this ran after Safety, the mode dispatch's DiscardIn*
+           (ClearCommand) would wipe the command before Safety could react,
+           and a command-driven emergency would never fire. -->
+      <ProcessCommand/>
 
       <!-- ════════════════════════════════════════════════════ -->
       <!-- LAYER 1: SAFETY (highest priority, always ticks)    -->
@@ -59,13 +73,6 @@
       </Parallel>
 
       <!-- ════════════════════════════════════════════════════ -->
-      <!-- LAYER 3: COMMAND ARBITRATION                        -->
-      <!-- ════════════════════════════════════════════════════ -->
-      <!-- Reads from all command sources, picks highest priority,
-           writes winning command to blackboard ports -->
-      <ProcessCommand/>
-
-      <!-- ════════════════════════════════════════════════════ -->
       <!-- LAYER 4: MAPPING OVERLAY (orthogonal to modes)      -->
       <!-- ════════════════════════════════════════════════════ -->
       <Fallback name="MappingOverlay">
@@ -113,7 +120,7 @@
         </Fallback>
 
         <!-- === TELEOP VOICE MODE === -->
-        <SubTree ID="TeleopVoiceSubtree"/>
+        <SubTree ID="TeleopVoiceSubtree" _autoremap="true"/>
 
         <!-- === TELEOP JOYCON MODE === -->
         <Fallback name="TeleopJoyconMode">
@@ -139,25 +146,33 @@
         </Fallback>
 
         <!-- === AUTONOMOUS MODE === -->
-        <SubTree ID="AutonomousSubtree"/>
+        <SubTree ID="AutonomousSubtree" _autoremap="true"/>
 
         <!-- === PATROL MODE === -->
-        <SubTree ID="PatrolSubtree"/>
+        <SubTree ID="PatrolSubtree" _autoremap="true"/>
 
         <!-- === IDLE MODE === -->
-        <SubTree ID="IdleSubtree"/>
+        <SubTree ID="IdleSubtree" _autoremap="true"/>
 
         <!-- Switch6 default: unknown/unimplemented mode → reset to IDLE -->
         <SetMode mode="IDLE"/>
       </Switch6>
-    </Parallel>
+    </ReactiveSequence>
   </BehaviorTree>
 
   <!-- ══════════════════════════════════════════════════════ -->
   <!-- SUBTREE: Autonomous Navigation with Supervision       -->
   <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    ReactiveFallback so the supervisor conditions (stop / succeeded / failed /
+    stalled / planner_timeout) are re-checked on EVERY tick while the
+    NavigateToGoal action runs. NavigateToGoal is the last child: it is started
+    and kept RUNNING here (not in IdleSubtree, where a mode switch would halt
+    and cancel it). When an earlier branch succeeds, the ReactiveFallback halts
+    NavigateToGoal, which cancels the action goal.
+  -->
   <BehaviorTree ID="AutonomousSubtree">
-    <Fallback name="AutonomousMode">
+    <ReactiveFallback name="AutonomousMode">
       <!-- Cancel navigation -->
       <Sequence name="CancelNav">
         <CheckCommand expected="stop"/>
@@ -178,13 +193,13 @@
       <!-- Navigation failure detected → tiered recovery -->
       <Sequence name="NavFailureRecovery">
         <CheckNavStatus expected="failed"/>
-        <SubTree ID="RecoverySubtree"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
       </Sequence>
 
       <!-- Stall detection: no progress for 30s -->
       <Sequence name="StallRecovery">
         <CheckNavStatus expected="stalled"/>
-        <SubTree ID="RecoverySubtree"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
       </Sequence>
 
       <!-- Planner heartbeat lost -->
@@ -195,23 +210,23 @@
         <SetMode mode="IDLE"/>
       </Sequence>
 
-      <!-- Status query while navigating -->
-      <Sequence name="StatusInAuto">
-        <CheckCommand expected="status"/>
-        <ClearCommand/>
-        <PublishStatus/>
-      </Sequence>
-
-      <!-- Default: navigation in progress, discard irrelevant commands -->
-      <ClearCommand name="DiscardInAuto"/>
-    </Fallback>
+      <!-- Default: start/continue driving to the goal (RUNNING while underway) -->
+      <NavigateToGoal location="{target_location}"/>
+    </ReactiveFallback>
   </BehaviorTree>
 
   <!-- ══════════════════════════════════════════════════════ -->
   <!-- SUBTREE: Patrol Mode                                  -->
   <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    ReactiveFallback, same pattern as AutonomousSubtree: the NavigateToGoal to
+    the current waypoint is the default RUNNING leaf; the guard branches are
+    re-checked every tick. On 'succeeded', PatrolAdvance bumps the index (which
+    also resets nav_status to 'navigating' so the waypoint isn't counted twice),
+    then the default leaf drives to the new {patrol_waypoint}.
+  -->
   <BehaviorTree ID="PatrolSubtree">
-    <Fallback name="PatrolMode">
+    <ReactiveFallback name="PatrolMode">
       <Sequence name="PatrolStop">
         <CheckCommand expected="stop"/>
         <ZeroTwist/>
@@ -224,18 +239,18 @@
       <Sequence name="PatrolAdvance">
         <CheckNavStatus expected="succeeded"/>
         <IncrementPatrolIndex/>
-        <NavigateToGoal location="{patrol_waypoint}"/>
         <Speak message="Siguiente punto: {patrol_waypoint}."/>
       </Sequence>
 
       <!-- Nav failure during patrol → try recovery -->
       <Sequence name="PatrolRecovery">
         <CheckNavStatus expected="failed"/>
-        <SubTree ID="RecoverySubtree"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
       </Sequence>
 
-      <ClearCommand name="DiscardInPatrol"/>
-    </Fallback>
+      <!-- Default: drive to the current patrol waypoint -->
+      <NavigateToGoal location="{patrol_waypoint}"/>
+    </ReactiveFallback>
   </BehaviorTree>
 
   <!-- ══════════════════════════════════════════════════════ -->
@@ -267,16 +282,19 @@
     <Fallback name="IdleMode">
       <Sequence name="StartNav">
         <CheckCommand expected="navigate"/>
-        <NavigateToGoal location="{target_location}"/>
+        <!-- Switch to AUTONOMOUS and let AutonomousSubtree own the long-running
+             goal so it can be supervised and cancelled reactively. Previously
+             NavigateToGoal lived here and returned RUNNING, so SetMode never
+             ran and the supervisor (GoalReached/recovery) was unreachable. -->
         <SetMode mode="AUTONOMOUS"/>
         <Speak message="Navegando a {target_location}."/>
         <ClearCommand/>
       </Sequence>
       <Sequence name="StartPatrol">
         <CheckCommand expected="patrol"/>
-        <!-- We use IncrementPatrolIndex to advance to patrol index 0 -->
+        <!-- Advance to patrol index 0 and switch to PATROL; PatrolSubtree owns
+             the long-running NavigateToGoal so it can supervise/advance. -->
         <IncrementPatrolIndex/>
-        <NavigateToGoal location="{patrol_waypoint}"/>
         <SetMode mode="PATROL"/>
         <Speak message="Iniciando patrulla."/>
         <ClearCommand/>
