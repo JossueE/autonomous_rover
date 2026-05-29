@@ -106,6 +106,18 @@ private:
      */
     void warnUnsafePerception(const std::string &warning_message);
 
+    /**
+     * @brief Publish an empty ObstacleCollection (no obstacles detected).
+     *
+     * When the local sensor view contains no obstacles (e.g. the robot faces
+     * open floor, or the cloud/clusters are empty), the planner must still be
+     * told "no obstacles right now" so it keeps planning on the base lanelet
+     * map. Going silent instead stalls the planner, since trajectory generation
+     * is driven by /obstacle_info. The collection carries a valid header so the
+     * planner's empty-obstacle path ("planning with base map only") runs.
+     */
+    void publishEmptyObstacles();
+
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_points_cloud_;
     rclcpp::Publisher<path_planning_dynamic::msg::ObstacleCollection>::SharedPtr obstacle_info_publisher_;
 
