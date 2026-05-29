@@ -1,0 +1,10 @@
+# Dynamic waypoints — persisted across sessions.
+# Locations saved via the /rover_bt/save_location service are appended here.
+# Lanelet2 map locations take priority over these if names conflict.
+waypoints:
+  cocina:
+    x: 5.2
+    y: 3.1
+    theta: 1.57
+    lanelet: ""
+    frame: "map"

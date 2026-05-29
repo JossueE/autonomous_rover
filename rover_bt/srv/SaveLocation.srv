@@ -1,0 +1,9 @@
+# Save current robot position as a named location
+string name        # e.g. "cocina"
+string lanelet     # optional: associated lanelet name
+---
+bool success
+string message
+float64 x
+float64 y
+float64 theta

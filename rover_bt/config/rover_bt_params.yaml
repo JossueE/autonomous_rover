@@ -1,0 +1,62 @@
+# ─── rover_bt parameters ───────────────────────────────────────────────
+# All tunable parameters for the rover_bt behavior tree node.
+
+rover_bt_node:
+  ros__parameters:
+    # ── BT engine ──
+    bt_tick_rate: 10.0                          # Hz
+    tree_xml: ""                                # empty → use installed default
+
+    # ── Topics ──
+    cmd_vel_topic: "/cmd_vel_safe"
+    odom_topic: "/odom"
+    amcl_pose_topic: "/amcl_robot_pose"
+    scan_topic: "/scan"
+    pointcloud_topic: "/k4a/points2"
+    imu_topic: "/imu/data"
+    trajectory_topic: "/sdv_trajectory"
+    command_topic: "/rover_bt/commands"
+    joy_topic: "/joy"
+    status_topic: "/rover_bt/status"
+
+    # ── AMCL fallback ──
+    amcl_pose_timeout: 2.0                      # seconds without AMCL → use odom
+
+    # ── Navigation supervision ──
+    goal_timeout: 30.0                          # seconds with no progress → stall
+    planner_heartbeat_timeout: 10.0             # seconds without /sdv_trajectory
+    nmpc_stall_velocity: 0.02                   # m/s — below this = not moving
+    nmpc_stall_timeout: 15.0                    # seconds at near-zero velocity
+    goal_tolerance: 0.3                         # meters — goal reached threshold
+
+    # ── Sensor health ──
+    lidar_stale_timeout: 5.0
+    camera_stale_timeout: 5.0
+    odom_stale_timeout: 3.0                     # critical — triggers e-stop
+    imu_stale_timeout: 5.0
+    motor_stale_timeout: 5.0
+
+    # ── TTS ──
+    tts_enabled: true
+    piper_bin: ""                               # empty → auto-detect from install
+    piper_model: ""                             # empty → auto-detect
+
+    # ── Locations ──
+    lanelet2_map: ""                            # path to .osm map for location names
+    dynamic_waypoints_file: ""                  # path to persisted dynamic locations
+
+    # ── RTAB-Map lifecycle ──
+    rtabmap_rgb_topic: "/k4a/rgb/image_raw"
+    rtabmap_depth_topic: "/k4a/depth_to_rgb/image_raw"
+    rtabmap_camera_info_topic: "/k4a/rgb/camera_info"
+    rtabmap_scan_cloud_topic: "/k4a/points2"
+    rtabmap_imu_topic: "/k4a/imu_filtered"
+
+    # ── Teleop voice defaults ──
+    teleop_linear_speed: 0.3                    # m/s
+    teleop_angular_speed: 0.5                   # rad/s
+    teleop_move_duration: 2.0                   # seconds
+    teleop_turn_duration: 1.5                   # seconds
+
+    # ── Patrol ──
+    patrol_waypoints: []                        # ordered list of location names

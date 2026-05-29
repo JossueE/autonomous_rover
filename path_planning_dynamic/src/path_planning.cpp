@@ -265,6 +265,14 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     rebuildGlobalPlanner();
     params_handler_ = this->add_on_set_parameters_callback(
         std::bind(&path_planning::onPlannerParameters, this, std::placeholders::_1));
+
+    // Initialize Action Server
+    action_server_ = rclcpp_action::create_server<NavigateToGoal>(
+        this,
+        "navigate_to_goal",
+        std::bind(&path_planning::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
+        std::bind(&path_planning::handle_cancel, this, std::placeholders::_1),
+        std::bind(&path_planning::handle_accepted, this, std::placeholders::_1));
 }
 
 
@@ -1673,6 +1681,117 @@ void path_planning::publishTrajectoryPath(const TreeFlat& flat, int leaf_idx)
     sdv_trajectory_pub_->publish(path_msg);
 }
 
+
+// ─── Action Server Callbacks ──────────────────────────────────────────
+
+rclcpp_action::GoalResponse path_planning::handle_goal(
+    const rclcpp_action::GoalUUID & uuid,
+    std::shared_ptr<const NavigateToGoal::Goal> goal)
+{
+    RCLCPP_INFO(this->get_logger(), "Action Server: Received goal request for location '%s'", goal->location_name.c_str());
+    (void)uuid;
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse path_planning::handle_cancel(
+    const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    RCLCPP_INFO(this->get_logger(), "Action Server: Received cancel request");
+    (void)goal_handle;
+    return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void path_planning::handle_accepted(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    std::lock_guard<std::mutex> lock(action_server_mutex_);
+    if (active_goal_handle_ && active_goal_handle_->is_active()) {
+        RCLCPP_INFO(this->get_logger(), "Action Server: Preempting active goal");
+        auto result = std::make_shared<NavigateToGoal::Result>();
+        result->success = false;
+        result->message = "Preempted by new goal";
+        active_goal_handle_->abort(result);
+    }
+    active_goal_handle_ = goal_handle;
+
+    // Start background thread for execution
+    std::thread([this, goal_handle]() {
+        this->execute_navigation(goal_handle);
+    }).detach();
+}
+
+void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    const auto goal = goal_handle->get_goal();
+    RCLCPP_INFO(this->get_logger(), "Action Server: Starting navigation execution to '%s' (lanelet: '%s')",
+                goal->location_name.c_str(), goal->lanelet_name.c_str());
+
+    // 1. Rebuild global planner for target lanelet dynamically
+    if (!goal->lanelet_name.empty()) {
+        end_lanelet_name_ = goal->lanelet_name;
+        RCLCPP_INFO(this->get_logger(), "Action Server: Rebuilding global planner to lanelet '%s'", end_lanelet_name_.c_str());
+        rebuildGlobalPlanner();
+    }
+
+    auto feedback = std::make_shared<NavigateToGoal::Feedback>();
+    auto result = std::make_shared<NavigateToGoal::Result>();
+
+    rclcpp::Rate rate(5.0); // 5Hz tracking rate
+    double target_x = goal->target_pose.pose.position.x;
+    double target_y = goal->target_pose.pose.position.y;
+    double total_distance = 0.0;
+    double start_time = this->now().seconds();
+    double last_x = car_state_->x;
+    double last_y = car_state_->y;
+
+    double tolerance = 0.3; // Default tolerance
+    this->get_parameter("planner.safe_clear", tolerance); // use safe_clear or fallback
+
+    while (rclcpp::ok() && goal_handle->is_active()) {
+        if (goal_handle->is_canceling()) {
+            result->success = false;
+            result->message = "Goal canceled by client";
+            result->total_distance = total_distance;
+            result->total_time = this->now().seconds() - start_time;
+            goal_handle->canceled(result);
+            RCLCPP_INFO(this->get_logger(), "Action Server: Goal cancelled");
+            return;
+        }
+
+        double rx = car_state_->x;
+        double ry = car_state_->y;
+
+        double d_step = std::hypot(rx - last_x, ry - last_y);
+        total_distance += d_step;
+        last_x = rx;
+        last_y = ry;
+
+        double dist_remaining = std::hypot(rx - target_x, ry - target_y);
+
+        feedback->distance_remaining = dist_remaining;
+        feedback->estimated_time_remaining = dist_remaining / 0.3; // estimated at 0.3m/s speed
+        feedback->current_pose.header.frame_id = "map";
+        feedback->current_pose.header.stamp = this->now();
+        feedback->current_pose.pose.position.x = rx;
+        feedback->current_pose.pose.position.y = ry;
+        feedback->current_pose.pose.position.z = 0.0;
+        feedback->planner_status = "tracking";
+
+        goal_handle->publish_feedback(feedback);
+
+        // Check if goal reached
+        if (dist_remaining <= tolerance) {
+            RCLCPP_INFO(this->get_logger(), "Action Server: Goal reached! Remaining distance is %.2fm", dist_remaining);
+            result->success = true;
+            result->message = "Goal reached successfully";
+            result->total_distance = total_distance;
+            result->total_time = this->now().seconds() - start_time;
+            goal_handle->succeed(result);
+            return;
+        }
+
+        rate.sleep();
+    }
+}
 
 int main(int argc, char *argv[])
 {

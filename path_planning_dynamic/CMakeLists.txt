@@ -14,6 +14,8 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(rover_bt REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -65,6 +67,8 @@ add_executable(pointcloud_roi_node src/pointcloud_roi.cpp)
 
 ament_target_dependencies(path_planning_node
   rclcpp
+  rclcpp_action
+  rover_bt
   rcl_interfaces
   std_msgs
   sensor_msgs

@@ -288,36 +288,17 @@ def generate_launch_description():
         condition=IfCondition(use_planning),
     )
 
-    # ── 10. Voice BT (optional) ───────────────────────────────────────────────
-    # Launched directly (not via voice_bt.launch.py) so that sim RTAB-Map
-    # topic overrides can be injected alongside the standard parameters.
-    # The Vosk/Piper asset paths default to the installed package share.
-    pkg_voice_bt = get_package_share_directory("voice_bt")
-    voice_bt_assets = os.path.join(pkg_voice_bt, "voice_assets")
-
-    voice_bt_node = Node(
-        package="voice_bt",
-        executable="voice_bt_node",
-        name="voice_bt_node",
-        output="screen",
-        parameters=[{
-            "use_sim_time":               use_sim_time,
-            "cmd_vel_topic":              "/cmd_vel_safe",
-            "odom_topic":                 "/odom",
-            "amcl_pose_topic":            "/amcl_robot_pose",
-            "bt_tick_rate":               10.0,
-            "vosk_model_es":              os.path.join(voice_bt_assets, "model_es"),
-            "vosk_model_en":              os.path.join(voice_bt_assets, "model_en"),
-            "piper_bin":                  os.path.join(voice_bt_assets, "piper", "piper"),
-            "piper_model":                os.path.join(voice_bt_assets, "es_MX-claude-high.onnx"),
-            "waypoints_file":             os.path.join(pkg_voice_bt, "config", "waypoints.yaml"),
-            # Sim RTAB-Map topic overrides (hardware defaults are /k4a/* topics)
-            "rtabmap_rgb_topic":          "/depth_camera/image",
-            "rtabmap_depth_topic":        "/depth_camera/depth_image",
-            "rtabmap_camera_info_topic":  "/depth_camera/camera_info",
-            "rtabmap_scan_cloud_topic":   "/depth_camera/points",
-            "rtabmap_imu_topic":          "/depth_camera/imu",
-        }],
+    # ── 10. Rover BT (optional) ───────────────────────────────────────────────
+    # Launches the new C++ Behavior Tree node alongside the Python ASR node
+    # by invoking the new rover_bt_sim.launch.py script.
+    rover_bt_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("rover_bt"),
+                "launch",
+                "rover_bt_sim.launch.py",
+            )
+        ),
         condition=IfCondition(use_voice_bt),
     )
 
@@ -350,7 +331,7 @@ def generate_launch_description():
             pointcloud_clustering_node,
             pointcloud_roi_node,
             nmpc_launch,
-            voice_bt_node,
+            rover_bt_launch,
             rviz_node,
         ]
     )

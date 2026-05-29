@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="RoverBTMain">
+  <BehaviorTree ID="RoverBTMain">
+    <!-- 
+      Parallel root: all children tick every cycle.
+      SUCCESS_ON_ALL: tree succeeds only if all children succeed.
+      FAILURE_ON_ONE: any child failure = tree failure (triggers safety).
+    -->
+    <Parallel name="RoverBTRoot"
+              success_count="-1"
+              failure_count="1">
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 1: SAFETY (highest priority, always ticks)    -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Sequence name="SafetyLayer">
+        <Fallback name="EmergencyGate">
+          <!-- If no emergency command → pass through (inverted SUCCESS) -->
+          <Inverter name="NoEmergency">
+            <CheckCommand expected="emergency_stop"/>
+          </Inverter>
+          <!-- Emergency detected → stop everything -->
+          <Sequence name="DoEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <Speak message="Parada de emergencia activada"/>
+            <ClearCommand/>
+          </Sequence>
+        </Fallback>
+
+        <!-- Critical sensor check: odom loss = e-stop -->
+        <Fallback name="CriticalSensorGate">
+          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"/>
+          <Sequence name="OdomLostEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <Speak message="Odometría perdida. Parada de emergencia."/>
+          </Sequence>
+        </Fallback>
+      </Sequence>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 2: SYSTEM HEALTH MONITOR (parallel watchdogs) -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Parallel name="SystemHealthMonitor"
+                success_count="-1"
+                failure_count="1">
+        <!-- Each watchdog checks its sensor and publishes diagnostics.
+             Returns SUCCESS if healthy, FAILURE if critical. -->
+        <CheckSensorHealth sensor="lidar"  max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="camera" max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="imu"    max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="motor"  max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <!-- Odom is checked in SafetyLayer (critical) -->
+      </Parallel>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 3: COMMAND ARBITRATION                        -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Reads from all command sources, picks highest priority,
+           writes winning command to blackboard ports -->
+      <ProcessCommand/>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 4: MAPPING OVERLAY (orthogonal to modes)      -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Fallback name="MappingOverlay">
+        <Sequence name="StartMappingSeq">
+          <CheckCommand expected="start_mapping"/>
+          <Inverter><CheckFlag flag="is_mapping"/></Inverter>
+          <StartMapping mode="mapping"/>
+          <Speak message="Iniciando mapeo nuevo."/>
+          <ClearCommand/>
+        </Sequence>
+        <Sequence name="StartSlamSeq">
+          <CheckCommand expected="start_slam"/>
+          <Inverter><CheckFlag flag="is_mapping"/></Inverter>
+          <StartMapping mode="slam"/>
+          <Speak message="Mejorando mapa existente."/>
+          <ClearCommand/>
+        </Sequence>
+        <Sequence name="StopMappingSeq">
+          <CheckCommand expected="stop_mapping"/>
+          <CheckFlag flag="is_mapping"/>
+          <StopMapping/>
+          <Speak message="Mapa guardado."/>
+          <ClearCommand/>
+        </Sequence>
+        <AlwaysSuccess name="MappingPassthrough"/>
+      </Fallback>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 5: MODE DISPATCH                              -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Switch6 name="ModeDispatch" variable="{mode}"
+               case_1="EMERGENCY"      case_2="TELEOP_VOICE"
+               case_3="TELEOP_JOYCON"  case_4="AUTONOMOUS"
+               case_5="PATROL"         case_6="IDLE">
+
+        <!-- === EMERGENCY MODE === -->
+        <Fallback name="EmergencyMode">
+          <Sequence name="ResumeFromEmergency">
+            <CheckCommand expected="resume"/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Operación reanudada."/>
+            <ClearCommand/>
+          </Sequence>
+          <ClearCommand name="DiscardInEmergency"/>
+        </Fallback>
+
+        <!-- === TELEOP VOICE MODE === -->
+        <SubTree ID="TeleopVoiceSubtree"/>
+
+        <!-- === TELEOP JOYCON MODE === -->
+        <Fallback name="TeleopJoyconMode">
+          <Sequence name="JoyToAuto">
+            <CheckCommand expected="autonomous"/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Modo autónomo."/>
+            <ClearCommand/>
+          </Sequence>
+          <Sequence name="JoyToVoice">
+            <CheckCommand expected="teleop_voice"/>
+            <SetMode mode="TELEOP_VOICE"/>
+            <Speak message="Modo voz."/>
+            <ClearCommand/>
+          </Sequence>
+          <Sequence name="JoyToPersonTrack">
+            <CheckCommand expected="person_track"/>
+            <SetMode mode="PERSON_TRACK"/>
+            <Speak message="Modo seguimiento de persona."/>
+            <ClearCommand/>
+          </Sequence>
+          <ClearCommand name="DiscardInJoycon"/>
+        </Fallback>
+
+        <!-- === AUTONOMOUS MODE === -->
+        <SubTree ID="AutonomousSubtree"/>
+
+        <!-- === PATROL MODE === -->
+        <SubTree ID="PatrolSubtree"/>
+
+        <!-- === IDLE MODE === -->
+        <SubTree ID="IdleSubtree"/>
+
+        <!-- Switch6 default: unknown/unimplemented mode → reset to IDLE -->
+        <SetMode mode="IDLE"/>
+      </Switch6>
+    </Parallel>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Autonomous Navigation with Supervision       -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="AutonomousSubtree">
+    <Fallback name="AutonomousMode">
+      <!-- Cancel navigation -->
+      <Sequence name="CancelNav">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Navegación cancelada."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Check if goal reached -->
+      <Sequence name="GoalReached">
+        <CheckNavStatus expected="succeeded"/>
+        <ZeroTwist/>
+        <Speak message="Llegué a {target_location}."/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+
+      <!-- Navigation failure detected → tiered recovery -->
+      <Sequence name="NavFailureRecovery">
+        <CheckNavStatus expected="failed"/>
+        <SubTree ID="RecoverySubtree"/>
+      </Sequence>
+
+      <!-- Stall detection: no progress for 30s -->
+      <Sequence name="StallRecovery">
+        <CheckNavStatus expected="stalled"/>
+        <SubTree ID="RecoverySubtree"/>
+      </Sequence>
+
+      <!-- Planner heartbeat lost -->
+      <Sequence name="PlannerDead">
+        <CheckNavStatus expected="planner_timeout"/>
+        <Speak message="Planificador no responde."/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+
+      <!-- Status query while navigating -->
+      <Sequence name="StatusInAuto">
+        <CheckCommand expected="status"/>
+        <ClearCommand/>
+        <PublishStatus/>
+      </Sequence>
+
+      <!-- Default: navigation in progress, discard irrelevant commands -->
+      <ClearCommand name="DiscardInAuto"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Patrol Mode                                  -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="PatrolSubtree">
+    <Fallback name="PatrolMode">
+      <Sequence name="PatrolStop">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Patrulla detenida."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Current waypoint reached → advance to next -->
+      <Sequence name="PatrolAdvance">
+        <CheckNavStatus expected="succeeded"/>
+        <IncrementPatrolIndex/>
+        <NavigateToGoal location="{patrol_waypoint}"/>
+        <Speak message="Siguiente punto: {patrol_waypoint}."/>
+      </Sequence>
+
+      <!-- Nav failure during patrol → try recovery -->
+      <Sequence name="PatrolRecovery">
+        <CheckNavStatus expected="failed"/>
+        <SubTree ID="RecoverySubtree"/>
+      </Sequence>
+
+      <ClearCommand name="DiscardInPatrol"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Tiered Recovery                              -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="RecoverySubtree">
+    <Fallback name="TieredRecovery">
+      <!-- Attempt 1: Request replan -->
+      <Sequence name="Attempt1_Replan">
+        <CheckFlag flag="recovery_attempted" negate="true"/>
+        <SetFlag flag="recovery_attempted" value="true"/>
+        <Speak message="Replanificando ruta."/>
+        <RequestReplan/>
+      </Sequence>
+      <!-- Attempt 2: Give up -->
+      <Sequence name="Attempt2_GiveUp">
+        <SetFlag flag="recovery_attempted" value="false"/>
+        <ZeroTwist/>
+        <Speak message="No puedo llegar al destino."/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Idle Mode                                    -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="IdleSubtree">
+    <Fallback name="IdleMode">
+      <Sequence name="StartNav">
+        <CheckCommand expected="navigate"/>
+        <NavigateToGoal location="{target_location}"/>
+        <SetMode mode="AUTONOMOUS"/>
+        <Speak message="Navegando a {target_location}."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="StartPatrol">
+        <CheckCommand expected="patrol"/>
+        <!-- We use IncrementPatrolIndex to advance to patrol index 0 -->
+        <IncrementPatrolIndex/>
+        <NavigateToGoal location="{patrol_waypoint}"/>
+        <SetMode mode="PATROL"/>
+        <Speak message="Iniciando patrulla."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="EnterTeleopVoice">
+        <CheckCommand expected="teleop_voice"/>
+        <SetMode mode="TELEOP_VOICE"/>
+        <Speak message="Modo voz. Di avanza, retrocede, izquierda, derecha o detente."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="EnterTeleopJoycon">
+        <CheckCommand expected="teleop_joycon"/>
+        <SetMode mode="TELEOP_JOYCON"/>
+        <Speak message="Modo joycon activado."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="EnterPersonTrack">
+        <CheckCommand expected="person_track"/>
+        <SetMode mode="PERSON_TRACK"/>
+        <Speak message="Modo seguimiento de persona."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="SaveLoc">
+        <CheckCommand expected="save_location"/>
+        <SaveLocation location_name="{target_location}"/>
+        <Speak message="Ubicación {target_location} guardada."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="StatusCmd">
+        <CheckCommand expected="status"/>
+        <ClearCommand/>
+        <PublishStatus/>
+      </Sequence>
+      <ClearCommand name="DiscardInIdle"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Teleop Voice                                 -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="TeleopVoiceSubtree">
+    <Fallback name="TeleopVoiceMode">
+      <Sequence name="VoiceToAuto">
+        <CheckCommand expected="autonomous"/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Modo autónomo."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceToJoy">
+        <CheckCommand expected="teleop_joycon"/>
+        <SetMode mode="TELEOP_JOYCON"/>
+        <Speak message="Modo joycon."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceToPersonTrack">
+        <CheckCommand expected="person_track"/>
+        <SetMode mode="PERSON_TRACK"/>
+        <Speak message="Modo seguimiento de persona."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceStop">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <Speak message="Deteniendo."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceForward">
+        <CheckCommand expected="forward"/>
+        <Speak message="Avanzando."/>
+        <ClearCommand/>
+        <MoveRover linear="0.3" angular="0.0" duration="2.0"/>
+      </Sequence>
+      <Sequence name="VoiceBackward">
+        <CheckCommand expected="backward"/>
+        <Speak message="Retrocediendo."/>
+        <ClearCommand/>
+        <MoveRover linear="-0.3" angular="0.0" duration="2.0"/>
+      </Sequence>
+      <Sequence name="VoiceTurnLeft">
+        <CheckCommand expected="turn_left"/>
+        <Speak message="Girando a la izquierda."/>
+        <ClearCommand/>
+        <MoveRover linear="0.0" angular="0.5" duration="1.5"/>
+      </Sequence>
+      <Sequence name="VoiceTurnRight">
+        <CheckCommand expected="turn_right"/>
+        <Speak message="Girando a la derecha."/>
+        <ClearCommand/>
+        <MoveRover linear="0.0" angular="-0.5" duration="1.5"/>
+      </Sequence>
+      <Sequence name="VoiceStatus">
+        <CheckCommand expected="status"/>
+        <ClearCommand/>
+        <PublishStatus/>
+      </Sequence>
+      <ClearCommand name="DiscardInVoice"/>
+    </Fallback>
+  </BehaviorTree>
+</root>

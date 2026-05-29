@@ -10,6 +10,8 @@
 
 // path nav msgs
 #include <nav_msgs/msg/path.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include "rover_bt/action/navigate_to_goal.hpp"
 
 // tf
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -286,6 +288,23 @@ private:
 public:
     path_planning();
     ~path_planning();
+
+    // Action Server types and members
+    using NavigateToGoal = rover_bt::action::NavigateToGoal;
+    using GoalHandleNavigateToGoal = rclcpp_action::ServerGoalHandle<NavigateToGoal>;
+
+private:
+    rclcpp_action::Server<NavigateToGoal>::SharedPtr action_server_;
+    std::shared_ptr<GoalHandleNavigateToGoal> active_goal_handle_;
+    std::mutex action_server_mutex_;
+
+    rclcpp_action::GoalResponse handle_goal(
+        const rclcpp_action::GoalUUID & uuid,
+        std::shared_ptr<const NavigateToGoal::Goal> goal);
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
+    void handle_accepted(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
+    void execute_navigation(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
 };
 
 #endif
