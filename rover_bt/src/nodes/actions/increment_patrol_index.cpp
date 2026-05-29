@@ -30,9 +30,13 @@ BT::NodeStatus IncrementPatrolIndex::tick() {
 
   config().blackboard->set("patrol_index", index);
   config().blackboard->set("patrol_waypoint", next_wp);
-  
+
   // Set target_location blackboard key too, so navigate_to_goal and Speak can use it
   config().blackboard->set("target_location", next_wp);
+
+  // Clear any terminal nav_status so the just-advanced waypoint isn't seen as
+  // already-reached on the next tick (which would skip waypoints).
+  config().blackboard->set("nav_status", std::string("navigating"));
 
   RCLCPP_INFO(ctx->node->get_logger(), "IncrementPatrolIndex: advanced patrol index to %d, waypoint '%s'",
               index, next_wp.c_str());

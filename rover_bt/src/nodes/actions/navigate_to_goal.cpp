@@ -1,6 +1,7 @@
 #include "rover_bt/nodes/actions/navigate_to_goal.hpp"
 #include "rover_bt/shared_context.hpp"
 #include "rover_bt/location_registry.hpp"
+#include "rover_bt/tts_client.hpp"
 #include <tf2/LinearMath/Quaternion.h>
 
 namespace rover_bt {
@@ -35,8 +36,11 @@ BT::NodeStatus NavigateToGoal::onStart() {
   goal_failed_.store(false);
   goal_handle_.reset();
 
-  // Reset recovery flag for new navigation cycle
-  config().blackboard->set("recovery_attempted", false);
+  // NOTE: recovery_attempted is intentionally NOT reset here. This node is the
+  // RUNNING default leaf of the AUTONOMOUS/PATROL supervisor and onStart runs
+  // again every time navigation resumes (e.g. after RequestReplan), so resetting
+  // here would loop the tiered recovery forever (replan, replan, ...). The flag
+  // is reset once per fresh navigate/patrol command in ProcessCommand instead.
 
   // Find waypoint
   double x = 0.0, y = 0.0, theta = 0.0;
@@ -53,10 +57,17 @@ BT::NodeStatus NavigateToGoal::onStart() {
     } else {
       RCLCPP_WARN(ctx->node->get_logger(), "NavigateToGoal: Waypoint '%s' not registered! Action failed.",
                   target_location_.c_str());
+      // Mark failed so the supervisor's recovery branch handles it gracefully
+      // (TTS + back to IDLE) instead of a NaN goal or a wedged AUTONOMOUS mode.
+      config().blackboard->set("nav_status", std::string("failed"));
+      if (ctx->tts) {
+        ctx->tts->speak("No conozco la ubicación " + target_location_);
+      }
       return BT::NodeStatus::FAILURE;
     }
   } else {
     RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: LocationRegistry is null!");
+    config().blackboard->set("nav_status", std::string("failed"));
     return BT::NodeStatus::FAILURE;
   }
 
@@ -66,6 +77,7 @@ BT::NodeStatus NavigateToGoal::onStart() {
   // Wait for Action Server to be available (briefly)
   if (!action_client_->wait_for_action_server(std::chrono::milliseconds(500))) {
     RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: Action server 'navigate_to_goal' not available!");
+    config().blackboard->set("nav_status", std::string("planner_timeout"));
     return BT::NodeStatus::FAILURE;
   }
 

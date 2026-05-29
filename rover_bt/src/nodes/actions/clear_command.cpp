@@ -11,12 +11,14 @@ BT::PortsList ClearCommand::providedPorts() {
 }
 
 BT::NodeStatus ClearCommand::tick() {
+  // Only clear the transient command. target_location is durable state (the
+  // current/last navigation target) consumed later by the AUTONOMOUS/PATROL
+  // supervisor and by status reporting, so it must NOT be wiped here.
   config().blackboard->set("command", std::string(""));
-  config().blackboard->set("target_location", std::string(""));
 
   std::shared_ptr<SharedContext> ctx;
   if (config().blackboard->get("context", ctx) && ctx && ctx->node) {
-    RCLCPP_DEBUG(ctx->node->get_logger(), "ClearCommand: cleared command and target from blackboard");
+    RCLCPP_DEBUG(ctx->node->get_logger(), "ClearCommand: cleared command from blackboard");
   }
 
   return BT::NodeStatus::SUCCESS;
