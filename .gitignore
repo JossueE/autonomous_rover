@@ -15,7 +15,7 @@ __pycache__/
 *.pyd
 
 # ── Machine-learning / voice model binaries ──────────────────────────────────
-# These are large binary assets fetched by voice_bt/install_deps.sh.
+# Large assets fetched by rover_bt/scripts/install_voice_assets.sh.
 # Do NOT commit them — download on first setup instead.
 *.onnx
 *.mdl
@@ -24,6 +24,9 @@ __pycache__/
 *.ie
 *.mat
 *.ort
+rover_bt/voice_assets/model_en/
+rover_bt/voice_assets/model_es/
+rover_bt/voice_assets/piper/
 
 # ── Editor / tooling ─────────────────────────────────────────────────────────
 .vscode/
