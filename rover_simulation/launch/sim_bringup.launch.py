@@ -11,7 +11,7 @@ can be used for incremental testing:
   ros2 launch rover_simulation sim_bringup.launch.py use_rtabmap:=true
 
   # Full stack (planning + BT):
-  ros2 launch rover_simulation sim_bringup.launch.py use_rtabmap:=true use_planning:=true use_voice_bt:=true
+  ros2 launch rover_simulation sim_bringup.launch.py use_rtabmap:=true use_planning:=true use_bt:=true
 """
 
 import os
@@ -64,7 +64,7 @@ def generate_launch_description():
             "use_planning", default_value="false",
             description="Launch Lanelet2 path planner + NMPC controller"),
         DeclareLaunchArgument(
-            "use_voice_bt", default_value="false",
+            "use_bt", default_value="false",
             description="Launch voice-commanded behavior tree"),
         DeclareLaunchArgument(
             "use_rviz", default_value="true",
@@ -91,7 +91,7 @@ def generate_launch_description():
     spawn_yaw    = LaunchConfiguration("spawn_yaw")
     use_rtabmap  = LaunchConfiguration("use_rtabmap")
     use_planning = LaunchConfiguration("use_planning")
-    use_voice_bt = LaunchConfiguration("use_voice_bt")
+    use_bt = LaunchConfiguration("use_bt")
     use_rviz     = LaunchConfiguration("use_rviz")
     map_odom_x   = LaunchConfiguration("map_odom_x")
     map_odom_y   = LaunchConfiguration("map_odom_y")
@@ -358,7 +358,7 @@ def generate_launch_description():
                 "rover_bt_sim.launch.py",
             )
         ),
-        condition=IfCondition(use_voice_bt),
+        condition=IfCondition(use_bt),
     )
 
     # ── 11. RViz2 (optional) ─────────────────────────────────────────────────
