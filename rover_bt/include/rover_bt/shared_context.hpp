@@ -33,6 +33,10 @@ struct SharedContext {
   std::atomic<double> last_motor_time{0.0};
   std::atomic<double> last_trajectory_time{0.0};
 
+  // Last time the joystick was used with its deadman held. Drives automatic
+  // TELEOP_JOYCON entry/exit (CheckJoyActive). 0.0 = never used.
+  std::atomic<double> last_joy_active_time{0.0};
+
   // Robot pose
   std::atomic<double> robot_x{0.0};
   std::atomic<double> robot_y{0.0};

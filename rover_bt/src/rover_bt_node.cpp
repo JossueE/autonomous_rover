@@ -9,6 +9,7 @@
 #include "rover_bt/nodes/conditions/check_sensor_health.hpp"
 #include "rover_bt/nodes/conditions/check_nav_status.hpp"
 #include "rover_bt/nodes/conditions/check_flag.hpp"
+#include "rover_bt/nodes/conditions/check_joy_active.hpp"
 
 #include "rover_bt/nodes/actions/navigate_to_goal.hpp"
 #include "rover_bt/nodes/actions/zero_twist.hpp"
@@ -181,6 +182,7 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<CheckSensorHealth>("CheckSensorHealth");
   factory_.registerNodeType<CheckNavStatus>("CheckNavStatus");
   factory_.registerNodeType<CheckFlag>("CheckFlag");
+  factory_.registerNodeType<CheckJoyActive>("CheckJoyActive");
 
   // Register actions
   factory_.registerNodeType<NavigateToGoal>("NavigateToGoal");
@@ -397,32 +399,38 @@ void RoverBTNode::on_command(const rover_bt::msg::Command::SharedPtr msg) {
 }
 
 void RoverBTNode::on_joy(const sensor_msgs::msg::Joy::SharedPtr msg) {
-  // Simple Joycon controller mapping to priority command.
-  // Priority 1 for joycon commands.
-  // button 4 (L1) or 5 (R1) as deadman switch
-  if (msg->buttons[4] == 1 || msg->buttons[5] == 1) {
-    rover_bt::msg::Command cmd;
-    cmd.stamp = this->now();
-    cmd.source = "joycon";
-    cmd.priority = 1;
+  // button 4 (L1) or 5 (R1) as deadman switch — nothing happens unless held.
+  const bool deadman = msg->buttons.size() > 5 &&
+                       (msg->buttons[4] == 1 || msg->buttons[5] == 1);
+  if (!deadman) {
+    return;
+  }
 
-    // Stop command mapped to button 0 (A or Cross)
-    if (msg->buttons[0] == 1) {
-      cmd.command = "stop";
-      arbitrator_->enqueue(cmd);
-    } else if (msg->buttons[3] == 1) { // Button Y or Triangle
-      cmd.command = "autonomous";
-      arbitrator_->enqueue(cmd);
-    } else if (std::abs(msg->axes[1]) > 0.2 || std::abs(msg->axes[3]) > 0.2) {
-      cmd.command = "teleop_joycon";
-      arbitrator_->enqueue(cmd);
+  // Mark the joystick as active. The behavior tree's JoyconOverlay uses this
+  // (via CheckJoyActive) to switch into TELEOP_JOYCON automatically while the
+  // deadman is held, and back to IDLE shortly after it is released — joycon
+  // teleop is detected, never a voice command.
+  ctx_->last_joy_active_time.store(this->now().seconds());
 
-      // Publishes direct cmd_vel velocities
-      geometry_msgs::msg::Twist twist;
-      twist.linear.x = msg->axes[1] * 0.4;  // Scale velocities
-      twist.angular.z = msg->axes[3] * 0.6;
-      cmd_vel_pub_->publish(twist);
-    }
+  rover_bt::msg::Command cmd;
+  cmd.stamp = this->now();
+  cmd.source = "joycon";
+  cmd.priority = 1;  // Priority 1 for joycon commands.
+
+  // Stop command mapped to button 0 (A or Cross)
+  if (msg->buttons.size() > 0 && msg->buttons[0] == 1) {
+    cmd.command = "stop";
+    arbitrator_->enqueue(cmd);
+  } else if (msg->buttons.size() > 3 && msg->buttons[3] == 1) { // Button Y or Triangle
+    cmd.command = "autonomous";
+    arbitrator_->enqueue(cmd);
+  } else if (msg->axes.size() > 3 &&
+             (std::abs(msg->axes[1]) > 0.2 || std::abs(msg->axes[3]) > 0.2)) {
+    // Publishes direct cmd_vel velocities while the stick is deflected.
+    geometry_msgs::msg::Twist twist;
+    twist.linear.x = msg->axes[1] * 0.4;  // Scale velocities
+    twist.angular.z = msg->axes[3] * 0.6;
+    cmd_vel_pub_->publish(twist);
   }
 }
 
