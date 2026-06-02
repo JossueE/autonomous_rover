@@ -107,7 +107,9 @@ install(TARGETS rover_bt_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/voice_command_node.py
+install(PROGRAMS
+  scripts/voice_command_node.py
+  scripts/install_voice_assets.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 
