@@ -16,7 +16,13 @@ ASSETS="$SCRIPT_DIR/../voice_assets"
 
 # ── Piper TTS binary ──────────────────────────────────────────────────────────
 PIPER_VERSION="2023.11.14-2"
-PIPER_ARCHIVE="piper_linux_x86_64.tar.gz"
+case "$(uname -m)" in
+    x86_64)          PIPER_ARCHIVE="piper_linux_x86_64.tar.gz" ;;
+    aarch64|arm64)   PIPER_ARCHIVE="piper_linux_aarch64.tar.gz" ;;
+    armv7l)          PIPER_ARCHIVE="piper_linux_armv7l.tar.gz" ;;
+    *) echo "  WARNING: unknown arch $(uname -m); defaulting to x86_64 Piper build" >&2
+       PIPER_ARCHIVE="piper_linux_x86_64.tar.gz" ;;
+esac
 PIPER_URL="https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/${PIPER_ARCHIVE}"
 
 download_piper() {
@@ -63,7 +69,13 @@ download_voice_model() {
 # ── Python runtime deps ───────────────────────────────────────────────────────
 install_python_deps() {
     echo "  Installing Python packages (faster-whisper, webrtcvad, sounddevice) ..."
-    pip3 install --break-system-packages faster-whisper webrtcvad sounddevice
+    # --break-system-packages only exists in pip >= 23.0.1 and is only needed on
+    # PEP 668 "externally-managed" distros. Older pip (e.g. JetPack) rejects the flag.
+    local break_flag=""
+    if pip3 install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+        break_flag="--break-system-packages"
+    fi
+    pip3 install $break_flag faster-whisper webrtcvad sounddevice
     echo "  Python deps ready."
 }
 
