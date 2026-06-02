@@ -94,7 +94,7 @@ ros2 launch rtabmap_launch rtabmap.launch.py \
   queue_size:=20 \
   qos:=2 \
   qos_odom:=1 \
-  rviz:=false
+  rviz:=true
 ```
 
 
@@ -177,6 +177,45 @@ ros2 launch rover_bringup hardware_bringup.launch.py
 ros2 launch rover_bringup k4a_rtabmap.launch.py mode:=localization
 
 ros2 launch path_planning_dynamic planning.launch.py
+
+Backend A.R.E.S. Command Hub:
+
+```bash
+cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main/backend
+export PYTHONNOUSERSITE=1
+source /opt/ros/jazzy/setup.bash
+source /home/snorlix/colcon_ws/install/setup.bash
+python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+
+Frontend A.R.E.S. Command Hub:
+
+```bash
+cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main
+npm run dev -- --host 127.0.0.1 --port 8080
+```
+
+Ojos:
+
+ros2 launch eyes_gui robot_face_debug_ui.launch.py
+
+# Don not use
+rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
+pcl_ply2pcd -format 1 /tmp/rtabmap_cloud_cloud.ply ~/.ros/rtabmap_cloud_binary.pcd
+
+tengo este archivo de rviz, pero tambien debe verse nada mas que en esa sesión no los estoy considerando: /rtabmap/odom_local_map
+
+/voxel_cloud
+
+/rtabmap/mapGraph
+
+/rtabmap/mapData
+
+/rtabmap/info
+
+
+
 
 ░▒▓snorlix ~ ▓▒░
 ❯  ros2 node list
@@ -329,24 +368,3 @@ ros2 launch path_planning_dynamic planning.launch.py
 /wheel/right_data
 ░▒▓snorlix ~ ▓▒░
 ❯  
-
-Backend A.R.E.S. Command Hub:
-
-```bash
-cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main/backend
-export PYTHONNOUSERSITE=1
-source /opt/ros/jazzy/setup.bash
-source /home/snorlix/colcon_ws/install/setup.bash
-python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-Frontend A.R.E.S. Command Hub:
-
-```bash
-cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main
-npm run dev -- --host 127.0.0.1 --port 8080
-```
-
-# Don not use
-rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
-pcl_ply2pcd -format 1 /tmp/rtabmap_cloud_cloud.ply ~/.ros/rtabmap_cloud_binary.pcd
