@@ -1,0 +1,629 @@
+Quiero que implementes una aplicación completa en C++/Qt como paquete ROS2 Jazzy.
+
+La aplicación debe reemplazar mi prototipo actual en Python/Tkinter. Yo solo voy a dejar en el repositorio las imágenes originales de los ojos. Tú debes crear todo lo demás: paquete ROS2, código C++/Qt, lógica de estados, visualizador mínimo tipo RViz, servicios ROS2, CMake, package.xml, instalación de assets y comandos de ejecución.
+
+Objetivo general:
+Crear una aplicación nativa llamada `robot_face_debug_ui` que tenga dos pantallas principales:
+
+1. Pantalla de ojos tipo WALL-E.
+2. Pantalla de debugging visual tipo RViz mínimo.
+
+La app debe iniciar mostrando los ojos. Cuando el usuario haga click sobre los ojos, debe cambiar a la pantalla de debugging. Si pasan 60 segundos sin actividad del usuario en la pantalla de debugging, debe regresar automáticamente a la pantalla de ojos. Además, la app debe exponer servicios ROS2 para que otros nodos puedan cambiar el estado facial: normal, crying, recover, debug, fullscreen.
+
+Muy importante:
+No quiero lanzar el ejecutable `rviz2`.
+No quiero mostrar la interfaz estándar de RViz.
+No quiero panel izquierdo de Displays.
+No quiero Selection.
+No quiero Tool Properties.
+No quiero Views.
+No quiero Time.
+No quiero toolbar de RViz.
+No quiero menú de RViz.
+No quiero que el usuario agregue displays manualmente.
+Quiero una app propia en C++/Qt que use internamente el motor de render de RViz2, específicamente `rviz_common::RenderPanel`, `rviz_common::VisualizationManager`, `rviz_rendering` y `rviz_default_plugins`, pero con una interfaz completamente personalizada y minimalista.
+
+La aplicación debe sentirse como una app nativa del robot, no como RViz abierto.
+
+Tecnologías:
+
+* ROS2 Jazzy
+* C++17
+* Qt5, porque ROS2 Jazzy suele trabajar con Qt5
+* rclcpp
+* rviz_common
+* rviz_rendering
+* rviz_default_plugins
+* pluginlib
+* ament_cmake
+* std_msgs
+* std_srvs, si hace falta
+* nav_msgs
+* sensor_msgs
+* visualization_msgs
+* geometry_msgs
+* map_msgs, si se necesita para OccupancyGridUpdate
+* rtabmap_msgs, si está disponible para `/rtabmap/info`, `/rtabmap/mapData` y `/rtabmap/mapGraph`
+
+Nombre del paquete:
+`robot_face_debug_ui`
+
+Estructura esperada del paquete:
+
+robot_face_debug_ui/
+├── CMakeLists.txt
+├── package.xml
+├── srv/
+│   └── SetFaceState.srv
+├── include/robot_face_debug_ui/
+│   ├── main_window.hpp
+│   ├── face_view.hpp
+│   ├── debug_view.hpp
+│   ├── face_state_node.hpp
+│   └── idle_event_filter.hpp
+├── src/
+│   ├── main.cpp
+│   ├── main_window.cpp
+│   ├── face_view.cpp
+│   ├── debug_view.cpp
+│   ├── face_state_node.cpp
+│   └── idle_event_filter.cpp
+├── assets/
+│   ├── Abiertos.PNG
+│   ├── Cerrando.PNG
+│   ├── Cerrados.PNG
+│   ├── Abiertos_llorando.PNG
+│   ├── Cerrando_llorando.PNG
+│   └── Cerrados_llorando.PNG
+└── launch/
+└── robot_face_debug_ui.launch.py
+
+Assets:
+Yo solo voy a dejar estas imágenes en `assets/`:
+
+* Abiertos.PNG
+* Cerrando.PNG
+* Cerrados.PNG
+* Abiertos_llorando.PNG
+* Cerrando_llorando.PNG
+* Cerrados_llorando.PNG
+
+Debes cargar esas imágenes desde el paquete instalado usando `ament_index_cpp::get_package_share_directory("robot_face_debug_ui")`, no usando rutas absolutas.
+
+Pantalla 1: FaceView
+Implementa una clase `FaceView` en C++/Qt que replique la lógica de mi app original de ojos.
+
+La lógica original era:
+
+* Mostrar imagen de ojos abiertos.
+* Parpadear automáticamente cada intervalo aleatorio.
+* Si está en modo normal:
+
+  * Secuencia de parpadeo:
+
+    * Cerrando.PNG
+    * Cerrados.PNG
+    * Cerrando.PNG
+    * Abiertos.PNG
+* Si está en modo crying:
+
+  * Secuencia de parpadeo:
+
+    * Cerrando_llorando.PNG
+    * Cerrados_llorando.PNG
+    * Cerrando_llorando.PNG
+    * Abiertos_llorando.PNG
+* Estado `is_crying`.
+* Estado `is_blinking`.
+* Estado `is_fullscreen`.
+* Función `showOpen()`.
+* Función `blink()`.
+* Función `collisionDetected()` o `setCrying(true)`.
+* Función `recover()` o `setCrying(false)`.
+* Función `toggleFullscreen()`.
+
+En C++/Qt debes implementarlo con:
+
+* QWidget o QLabel para mostrar la imagen.
+* QPixmap para cargar imágenes.
+* QTimer para animar la secuencia de parpadeo.
+* QTimer para programar el siguiente parpadeo automático.
+* QRandomGenerator para generar delay aleatorio.
+* resize responsivo manteniendo aspecto de imagen.
+* fondo negro.
+* sin bordes extraños.
+* click sobre la pantalla de ojos debe emitir una señal `debugRequested()`.
+
+Parpadeo:
+Usar tiempos similares:
+
+* closing: 90 ms
+* closed: 120 ms
+* opening/return: 90 ms
+* intervalo automático aleatorio entre 2200 ms y 5200 ms.
+
+Controles de teclado:
+Mantener controles de prueba:
+
+* Escape: cerrar app.
+* Space: parpadear manualmente.
+* C/c: activar crying.
+* R/r: recover/normal.
+* F/f: toggle fullscreen.
+* D/d: cambiar manualmente a DebugView.
+* B/b o Backspace: regresar a FaceView.
+
+Pantalla 2: DebugView
+Implementa una clase `DebugView` que sea una pantalla minimalista de debugging visual tipo RViz.
+
+Debe usar:
+
+* `rviz_common::RenderPanel`
+* `rviz_common::VisualizationManager`
+* `rviz_common::Display`
+* `rviz_default_plugins`
+* `rviz_rendering`
+
+Pero NO debe mostrar la UI completa de RViz.
+
+La pantalla debe tener:
+
+* Fondo oscuro.
+* Viewport/render central.
+* Opcionalmente un panel lateral pequeño propio, hecho en Qt, con checkboxes para activar/desactivar capas.
+* Botón `Back to Eyes`.
+* Panel de texto pequeño para debug de RTAB-Map, especialmente `/rtabmap/info` y `/rtabmap/mapData` si no se renderizan directamente.
+
+Interacción táctil del visualizador 3D:
+
+La pantalla `DebugView` debe estar optimizada para pantalla táctil.
+
+Sobre el RenderPanel de RViz embebido, la navegación de cámara debe funcionar así:
+
+* 1 dedo: rotar la imagen/escena 3D.
+* 2 dedos: desplazar/pan la escena.
+* gesto de pinza: zoom in / zoom out.
+
+No agregar herramientas visibles de cámara.
+No usar la toolbar de RViz.
+No permitir selección manual de objetos.
+No permitir que el usuario cambie el modo de herramienta como en RViz.
+No mostrar controles extra de navegación.
+
+Estas tres acciones táctiles son las únicas acciones permitidas para manipular la vista 3D.
+
+El objetivo es que el usuario pueda explorar el mapa/debug visual de forma natural desde la pantalla táctil del robot.
+
+Usar `QStackedWidget` en `MainWindow`:
+
+* Page 0: FaceView
+* Page 1: DebugView
+
+Cambio de pantalla:
+
+* La app inicia en FaceView.
+* Click en FaceView llama `MainWindow::showDebugView()`.
+* Servicio ROS2 con estado `debug` también llama `showDebugView()`.
+* Botón Back o servicio `normal` llama `showFaceView()`.
+* Si pasan 30 segundos sin actividad del usuario mientras está en DebugView, volver a FaceView automáticamente.
+
+Inactividad:
+Implementa un `IdleEventFilter` o lógica equivalente.
+
+El timeout de inactividad debe ser de 30 segundos, no de 60 segundos.
+
+Debe detectar actividad de usuario en DebugView:
+
+* touch begin
+* touch update
+* touch end
+* gesture begin
+* gesture update
+* gesture end
+* mouse move, solo como fallback si la pantalla táctil emite mouse events
+* mouse press, solo como fallback
+* mouse release, solo como fallback
+* wheel, solo como fallback
+* key press, solo para controles de prueba/desarrollo
+
+Cada evento válido debe reiniciar un `QTimer` de 30 segundos.
+
+Si el timer expira, llamar `MainWindow::showFaceView()`.
+
+No cierres la app al volver a ojos.
+Solo cambia la pantalla en el `QStackedWidget`.
+
+La prioridad debe ser touch.
+Mouse y teclado solo deben existir como fallback o controles de desarrollo, no como interacción principal del usuario final.
+
+ROS2:
+Crear una clase `FaceStateNode` que herede de `rclcpp::Node`.
+
+Debe exponer:
+
+Servicio:
+`/robot_face/set_state`
+
+Tipo custom:
+`srv/SetFaceState.srv`
+
+Contenido del servicio:
+
+## string state
+
+bool success
+string message
+
+Estados aceptados:
+
+* "normal"
+* "recover"
+* "crying"
+* "debug"
+* "face"
+* "fullscreen"
+* "blink"
+
+Comportamiento:
+
+* "normal": quitar crying y mostrar FaceView.
+* "recover": igual que normal.
+* "crying": activar crying y mostrar FaceView.
+* "debug": mostrar DebugView.
+* "face": mostrar FaceView sin cambiar crying.
+* "fullscreen": alternar fullscreen.
+* "blink": ejecutar blink manual.
+
+También publicar estado actual:
+Topic:
+`/robot_face/current_state`
+
+Tipo:
+`std_msgs/msg/String`
+
+Valores publicados:
+
+* "normal"
+* "crying"
+* "debug"
+
+Publicar cuando cambie el estado.
+
+La comunicación entre `FaceStateNode` y la UI Qt debe ser thread-safe:
+
+* ROS2 debe correr en un thread aparte con `rclcpp::executors::SingleThreadedExecutor`.
+* No modificar widgets Qt directamente desde el thread de ROS.
+* Usar señales/slots Qt con `Qt::QueuedConnection` para pedir cambios en la UI.
+
+MainWindow:
+Crear una clase `MainWindow : public QMainWindow`.
+
+Debe contener:
+
+* QStackedWidget
+* FaceView
+* DebugView
+* FaceStateNode o un puente de señales hacia FaceStateNode
+* idle timer/event filter
+* funciones:
+
+  * `showFaceView()`
+  * `showDebugView()`
+  * `setCrying(bool enabled)`
+  * `recover()`
+  * `blink()`
+  * `toggleFullscreen()`
+  * `handleStateCommand(QString state)`
+
+DebugView: visualizador mínimo tipo RViz
+Configurar el RenderPanel y VisualizationManager programáticamente.
+
+Fixed Frame:
+`map`
+
+Frame rate:
+30 FPS si aplica.
+
+Crear displays programáticamente para estos tópicos:
+
+1. Grid:
+
+* Class: `rviz_default_plugins/Grid`
+* Enabled: true
+* Plane: XY
+* Cell size: 1
+* Color gris
+* Alpha: 0.5
+
+2. Map: `/global_planner_occupancy_grid`
+
+* Class: `rviz_default_plugins/Map`
+* Topic: `/global_planner_occupancy_grid`
+* Update Topic: `/global_planner_occupancy_grid_updates`
+* Alpha: 0.7
+* Color scheme: map
+* Reliability: Reliable si se puede configurar
+* Durability: Volatile si se puede configurar
+
+3. Path: `/sdv_trajectory`
+
+* Class: `rviz_default_plugins/Path`
+* Topic: `/sdv_trajectory`
+* Color: verde
+* Line width: 0.1
+* Offset Z: 2.0 si se puede
+* Enabled: true
+
+4. PointCloud2: `/points_rotated_notground`
+
+* Class: `rviz_default_plugins/PointCloud2`
+* Topic: `/points_rotated_notground`
+* Style: Points
+* Size: 0.01 m
+* Color transformer: Intensity
+* Use rainbow: true
+* Reliability: Reliable
+* Durability: Transient Local si se puede
+
+5. MarkerArray: `/all_available_paths`
+
+* Class: `rviz_default_plugins/MarkerArray`
+* Topic: `/all_available_paths`
+* Enabled: true
+
+6. Marker: `/robot_footprint_polygon`
+
+* Class: `rviz_default_plugins/Marker`
+* Topic: `/robot_footprint_polygon`
+* Enabled: true
+
+7. Map: `/rtabmap/grid_prob_map`
+
+* Class: `rviz_default_plugins/Map`
+* Topic: `/rtabmap/grid_prob_map`
+* Update Topic: `/rtabmap/grid_prob_map_updates`
+* Alpha: 0.7
+* Color scheme: map
+* Enabled: true
+
+8. MarkerArray: `/global_planner`
+
+* Class: `rviz_default_plugins/MarkerArray`
+* Topic: `/global_planner`
+* Enabled: true
+
+Tópicos adicionales que también deben quedar considerados:
+
+9. `/voxel_cloud`
+
+* Intentar visualizarlo como `rviz_default_plugins/PointCloud2`.
+* Topic: `/voxel_cloud`
+* Style: Points
+* Size: 0.02 m
+* Enabled: true.
+* Agregar checkbox propio para activarlo/desactivarlo.
+
+10. `/rtabmap/odom_local_map`
+
+* Primero documentar que se debe verificar el tipo con:
+  `ros2 topic info /rtabmap/odom_local_map`
+* Si es `nav_msgs/msg/Path`, visualizarlo con `rviz_default_plugins/Path`.
+* Si es `nav_msgs/msg/Odometry`, visualizarlo con un display compatible si existe o suscribirse manualmente y dibujar/mostrar trayectoria acumulada.
+* Si el tipo no es compatible inicialmente, mostrar su estado en el panel de debug textual y dejar la estructura preparada.
+
+11. `/rtabmap/mapGraph`
+
+* Este tópico normalmente puede ser un tipo de RTAB-Map, no necesariamente `MarkerArray`.
+* Si el tipo es compatible con un display existente, usarlo.
+* Si no es compatible, suscribirse con `rtabmap_msgs/msg/MapGraph` si está disponible y mostrar en panel textual:
+
+  * número de poses
+  * número de links
+  * timestamp
+* Dejar TODO claro para dibujar nodos/aristas como markers o líneas en una siguiente fase.
+
+12. `/rtabmap/mapData`
+
+* Este tópico puede ser pesado y puede no tener display RViz estándar.
+* Suscribirse si `rtabmap_msgs/msg/MapData` está disponible.
+* Mostrar resumen en panel textual:
+
+  * número de poses
+  * número de nodos/signatures
+  * número de features o datos disponibles si aplica
+  * timestamp
+* No bloquear la UI si el mensaje es grande.
+* Usar callback eficiente.
+* Si no se implementa visualización completa, dejarlo como panel textual en la versión mínima.
+
+13. `/rtabmap/info`
+
+* Suscribirse a `rtabmap_msgs/msg/Info` si está disponible.
+* Mostrar en panel textual valores útiles como:
+
+  * loop closures
+  * rejected loop closures
+  * proximity detections
+  * odometry variance, si existe
+  * stats importantes disponibles en el mensaje
+  * timestamp
+* Si no está disponible `rtabmap_msgs`, dejar compilación opcional o explicar claramente cómo agregar la dependencia.
+
+Importante sobre los tópicos:
+La versión mínima debe compilar aunque algunos tópicos no estén publicados al momento de ejecutar.
+La app no debe crashear si un tópico no existe.
+Los displays deben aparecer igual y quedar esperando datos.
+Si un tipo de mensaje no es compatible con un display de RViz, no inventar. Mostrar resumen textual o dejar un TODO bien estructurado.
+
+Panel lateral propio:
+Agregar un panel Qt propio, no el panel de RViz, con checkboxes:
+
+* Global Map
+* RTAB Grid Map
+* SDV Trajectory
+* PointCloud Ground Filtered
+* Voxel Cloud
+* Available Paths
+* Robot Footprint
+* Global Planner
+* RTAB Debug Info
+
+Cada checkbox debe activar/desactivar el display correspondiente usando `display->setEnabled(true/false)`.
+
+También incluir:
+
+* Botón `Back to Eyes`
+* Label de estado actual:
+
+  * Current screen: Face o Debug
+  * Face state: Normal o Crying
+  * Fixed frame: map
+
+Estética:
+
+* Fondo general oscuro.
+* Panel lateral oscuro.
+* Texto claro.
+* Botones minimalistas.
+* No debe parecer la UI clásica de RViz.
+* Debe parecer una pantalla interna del robot.
+
+Compilación:
+El paquete debe compilar con:
+
+colcon build --packages-select robot_face_debug_ui
+
+Ejecución:
+
+source install/setup.bash
+ros2 run robot_face_debug_ui robot_face_debug_ui
+
+También crear un launch:
+
+ros2 launch robot_face_debug_ui robot_face_debug_ui.launch.py
+
+CMakeLists.txt:
+Debe incluir correctamente:
+
+* Qt automoc/autouic si aplica
+* find_package(ament_cmake REQUIRED)
+* find_package(rclcpp REQUIRED)
+* find_package(std_msgs REQUIRED)
+* find_package(rosidl_default_generators REQUIRED)
+* find_package(rviz_common REQUIRED)
+* find_package(rviz_rendering REQUIRED)
+* find_package(rviz_default_plugins REQUIRED)
+* find_package(pluginlib REQUIRED)
+* find_package(ament_index_cpp REQUIRED)
+* find_package(Qt5 REQUIRED COMPONENTS Widgets Core Gui)
+* find_package(nav_msgs REQUIRED)
+* find_package(sensor_msgs REQUIRED)
+* find_package(visualization_msgs REQUIRED)
+* find_package(geometry_msgs REQUIRED)
+* find_package(map_msgs QUIET)
+* find_package(rtabmap_msgs QUIET)
+
+Si `rtabmap_msgs` o `map_msgs` no están disponibles, la app principal debe seguir compilando para la versión mínima de displays estándar. Para RTAB-Map debug textual, puedes usar compilación condicional o dejar instrucciones claras.
+
+package.xml:
+Debe declarar todas las dependencias necesarias.
+
+Instalación:
+Instalar:
+
+* executable
+* launch files
+* assets
+
+Usar `install(DIRECTORY assets DESTINATION share/${PROJECT_NAME})`
+Usar `install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})`
+
+main.cpp:
+Debe:
+
+1. Inicializar rclcpp.
+2. Inicializar QApplication.
+3. Crear MainWindow.
+4. Crear FaceStateNode.
+5. Conectar señales del nodo hacia MainWindow.
+6. Ejecutar ROS2 en un thread aparte.
+7. Ejecutar `app.exec()`.
+8. Al cerrar, apagar executor, thread y rclcpp correctamente.
+
+No dejar memory leaks.
+No cerrar de golpe el thread de ROS2.
+Manejar shutdown limpio.
+
+Prioridad de implementación:
+Primero entrega una versión mínima funcional que haga esto:
+
+1. Cargar imágenes.
+2. Mostrar ojos.
+3. Parpadear automáticamente.
+4. Activar crying/recover con teclado.
+5. Cambiar a DebugView con tap.
+6. Regresar a ojos con botón o timeout de 30 segundos.
+7. Soportar navegación táctil en DebugView, limitada únicamente a estas acciones:
+   * 1 dedo rota la escena 3D.
+   * 2 dedos desplazan/pan la escena.
+   * Pinza con 2 dedos hace zoom in / zoom out.
+   * No debe haber otros gestos, herramientas, selección manual, toolbar ni controles extra de navegación.
+7. Exponer `/robot_face/set_state`.
+8. Crear RenderPanel mínimo.
+9. Fixed Frame = map.
+10. Mostrar estos displays:
+
+* Grid
+* `/global_planner_occupancy_grid`
+* `/sdv_trajectory`
+* `/points_rotated_notground`
+* `/rtabmap/grid_prob_map`
+* `/global_planner`
+
+Después dejar preparado y, si es posible, implementar:
+
+* `/voxel_cloud`
+* `/all_available_paths`
+* `/robot_footprint_polygon`
+* `/rtabmap/odom_local_map`
+* `/rtabmap/mapGraph`
+* `/rtabmap/mapData`
+* `/rtabmap/info`
+
+Entregables obligatorios:
+
+1. Código completo de todos los archivos.
+2. CMakeLists.txt completo.
+3. package.xml completo.
+4. SetFaceState.srv completo.
+5. launch file completo.
+6. Explicación breve de arquitectura.
+7. Comandos de compilación.
+8. Comandos de ejecución.
+9. Ejemplos de llamadas al servicio:
+
+ros2 service call /robot_face/set_state robot_face_debug_ui/srv/SetFaceState "{state: 'crying'}"
+
+ros2 service call /robot_face/set_state robot_face_debug_ui/srv/SetFaceState "{state: 'normal'}"
+
+ros2 service call /robot_face/set_state robot_face_debug_ui/srv/SetFaceState "{state: 'debug'}"
+
+ros2 service call /robot_face/set_state robot_face_debug_ui/srv/SetFaceState "{state: 'blink'}"
+
+10. Explicar dónde debo colocar las imágenes.
+11. Explicar cómo agregar más displays después.
+
+Notas importantes:
+
+* No quiero una explicación genérica.
+* No quiero pseudo-código.
+* Quiero código real, organizado y compilable.
+* Si alguna API exacta de RViz2 en ROS2 Jazzy requiere ajuste, indícalo claramente y entrega la alternativa.
+* No uses Python.
+* No uses Tkinter.
+* No uses Foxglove.
+* No uses navegador.
+* No lances `rviz2`.
+* La app final debe ser una sola ventana C++/Qt ROS2.
+* La app debe alternar internamente entre ojos y debug view usando `QStackedWidget`.
+* La versión mínima debe ser estable aunque no todos los tópicos estén activos.
