@@ -10,7 +10,6 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('rover_bt')
-    pkg_voice_bt = get_package_share_directory('voice_bt')
 
     return LaunchDescription([
         # ── Arguments ──
@@ -50,8 +49,8 @@ def generate_launch_description():
             name='voice_command_node',
             output='screen',
             parameters=[{
-                'vosk_model_es': os.path.join(pkg_voice_bt, 'voice_assets', 'model_es'),
-                'vosk_model_en': os.path.join(pkg_voice_bt, 'voice_assets', 'model_en'),
+                'vosk_model_es': os.path.join(pkg_dir, 'voice_assets', 'model_es'),
+                'vosk_model_en': os.path.join(pkg_dir, 'voice_assets', 'model_en'),
                 'waypoints_file': os.path.join(pkg_dir, 'config', 'waypoints.yaml'),
             }],
         ),

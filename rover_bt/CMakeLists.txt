@@ -115,7 +115,7 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY launch config trees
+install(DIRECTORY launch config trees voice_assets
   DESTINATION share/${PROJECT_NAME}
 )
 

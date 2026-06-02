@@ -187,14 +187,11 @@ class VoiceCommandNode(Node):
 
         # Package share directories for default models
         from ament_index_python.packages import get_package_share_directory
-        try:
-            voice_bt_share = get_package_share_directory("voice_bt")
-        except Exception:
-            voice_bt_share = "/home/ggm/Documents/octavo/rover_ws/src/voice_bt"
+        rover_bt_share = get_package_share_directory("rover_bt")
 
-        self.declare_parameter("vosk_model_es", os.path.join(voice_bt_share, "voice_assets", "model_es"))
-        self.declare_parameter("vosk_model_en", os.path.join(voice_bt_share, "voice_assets", "model_en"))
-        self.declare_parameter("waypoints_file", os.path.join(voice_bt_share, "config", "waypoints.yaml"))
+        self.declare_parameter("vosk_model_es", os.path.join(rover_bt_share, "voice_assets", "model_es"))
+        self.declare_parameter("vosk_model_en", os.path.join(rover_bt_share, "voice_assets", "model_en"))
+        self.declare_parameter("waypoints_file", os.path.join(rover_bt_share, "config", "waypoints.yaml"))
         self.declare_parameter("command_topic", "/rover_bt/commands")
 
         # Load Waypoints for parser vocabulary
