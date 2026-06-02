@@ -42,6 +42,10 @@ constexpr double kRotateScale = 0.006;
 constexpr double kPanScale = 0.025;
 constexpr double kPinchZoomScale = 0.035;
 constexpr double kWheelZoomScale = 0.002;
+constexpr double kAvailablePathsZOffset = 2.0;
+constexpr char kAvailablePathsInputTopic[] = "/all_available_paths";
+constexpr char kAvailablePathsOffsetTopic[] =
+  "/robot_face_debug_ui/all_available_paths_offset";
 
 QString stampToText(const builtin_interfaces::msg::Time & stamp)
 {
@@ -117,6 +121,9 @@ DebugView::DebugView(QWidget * parent)
   debugStep("DebugView constructor: setupRtabSubscriptions begin");
   setupRtabSubscriptions();
   debugStep("DebugView constructor: setupRtabSubscriptions end");
+  debugStep("DebugView constructor: setupAvailablePathsOffsetRelay begin");
+  setupAvailablePathsOffsetRelay();
+  debugStep("DebugView constructor: setupAvailablePathsOffsetRelay end");
   debugStep("DebugView constructor: end");
 }
 
@@ -324,6 +331,9 @@ void DebugView::buildUi()
     {"Available Paths", "available_paths"},
     {"Robot Footprint", "robot_footprint"},
     {"Global Planner", "global_planner"},
+    {"RTAB MapCloud", "rtab_map_cloud"},
+    {"RTAB MapGraph", "rtab_map_graph"},
+    {"RTAB Info Display", "rtab_info_plugin"},
     {"RTAB Debug Info", "rtab_debug"}};
 
   for (const auto & layer : layers) {
@@ -578,13 +588,25 @@ void DebugView::createDisplays()
   debugStep("createDisplays: available paths begin");
   configureMarker(
     addDisplay("available_paths", "rviz_default_plugins/MarkerArray", "Available Paths", true),
-    "/all_available_paths");
+    kAvailablePathsOffsetTopic);
   debugStep("createDisplays: available paths end");
   debugStep("createDisplays: robot footprint begin");
   configureMarker(
     addDisplay("robot_footprint", "rviz_default_plugins/Marker", "Robot Footprint", true),
     "/robot_footprint_polygon");
   debugStep("createDisplays: robot footprint end");
+  debugStep("createDisplays: rtab info plugin begin");
+  configureRtabInfoDisplay(
+    addDisplay("rtab_info_plugin", "rtabmap_rviz_plugins/Info", "RTAB Info", true));
+  debugStep("createDisplays: rtab info plugin end");
+  debugStep("createDisplays: rtab map cloud begin");
+  configureRtabMapCloud(
+    addDisplay("rtab_map_cloud", "rtabmap_rviz_plugins/MapCloud", "RTAB MapCloud", true));
+  debugStep("createDisplays: rtab map cloud end");
+  debugStep("createDisplays: rtab map graph begin");
+  configureRtabMapGraph(
+    addDisplay("rtab_map_graph", "rtabmap_rviz_plugins/MapGraph", "RTAB MapGraph", true));
+  debugStep("createDisplays: rtab map graph end");
 
   debugStep("createDisplays: connect checkboxes begin");
   for (auto it = layer_checks_.cbegin(); it != layer_checks_.cend(); ++it) {
@@ -744,6 +766,73 @@ void DebugView::configureMarker(rviz_common::Display * display, const QString & 
   setDisplayProperty(display, {"Topic", "Filter size"}, 10);
 }
 
+void DebugView::configureRtabInfoDisplay(rviz_common::Display * display)
+{
+  if (!display) {
+    return;
+  }
+
+  setAnyDisplayProperty(display, {{"Topic"}}, "/rtabmap/info");
+  setDisplayProperty(display, {"Topic", "Depth"}, 5);
+  setDisplayProperty(display, {"Topic", "History Policy"}, "Keep Last");
+  setDisplayProperty(display, {"Topic", "Reliability Policy"}, "Reliable");
+  setDisplayProperty(display, {"Topic", "Durability Policy"}, "Volatile");
+}
+
+void DebugView::configureRtabMapCloud(rviz_common::Display * display)
+{
+  if (!display) {
+    return;
+  }
+
+  setAnyDisplayProperty(display, {{"Topic"}}, "/rtabmap/mapData");
+  setDisplayProperty(display, {"Alpha"}, 1.0);
+  setDisplayProperty(display, {"Cloud decimation"}, 4);
+  setDisplayProperty(display, {"Cloud from scan"}, false);
+  setDisplayProperty(display, {"Cloud max depth (m)"}, 4.0);
+  setDisplayProperty(display, {"Cloud min depth (m)"}, 0.0);
+  setDisplayProperty(display, {"Cloud voxel size (m)"}, 0.01);
+  setDisplayProperty(display, {"Color Transformer"}, "RGB8");
+  setDisplayProperty(display, {"Download graph"}, false);
+  setDisplayProperty(display, {"Download map"}, false);
+  setDisplayProperty(display, {"Download namespace"}, "rtabmap");
+  setDisplayProperty(display, {"Filter ceiling (m)"}, 0.0);
+  setDisplayProperty(display, {"Filter floor (m)"}, 0.0);
+  setDisplayProperty(display, {"Node filtering angle (degrees)"}, 30.0);
+  setDisplayProperty(display, {"Node filtering radius (m)"}, 0.0);
+  setDisplayProperty(display, {"Position Transformer"}, "XYZ");
+  setDisplayProperty(display, {"Size (Pixels)"}, 3);
+  setAnyDisplayProperty(display, {{"Size (m)"}, {"Size"}}, 0.01);
+  setDisplayProperty(display, {"Style"}, "Points");
+  setDisplayProperty(display, {"Use Fixed Frame"}, true);
+  setAnyDisplayProperty(display, {{"Use rainbow"}, {"Use Rainbow"}}, true);
+  setDisplayProperty(display, {"Topic", "Depth"}, 5);
+  setDisplayProperty(display, {"Topic", "History Policy"}, "Keep Last");
+  setDisplayProperty(display, {"Topic", "Reliability Policy"}, "Reliable");
+  setDisplayProperty(display, {"Topic", "Durability Policy"}, "Volatile");
+}
+
+void DebugView::configureRtabMapGraph(rviz_common::Display * display)
+{
+  if (!display) {
+    return;
+  }
+
+  setAnyDisplayProperty(display, {{"Topic"}}, "/rtabmap/mapGraph");
+  setDisplayProperty(display, {"Alpha"}, 1.0);
+  setDisplayProperty(display, {"Global loop closure"}, QColor(255, 0, 0));
+  setDisplayProperty(display, {"Landmark"}, QColor(0, 128, 0));
+  setDisplayProperty(display, {"Local loop closure"}, QColor(255, 255, 0));
+  setDisplayProperty(display, {"Merged neighbor"}, QColor(255, 170, 0));
+  setDisplayProperty(display, {"Neighbor"}, QColor(0, 0, 255));
+  setDisplayProperty(display, {"User"}, QColor(255, 0, 0));
+  setDisplayProperty(display, {"Virtual"}, QColor(255, 0, 255));
+  setDisplayProperty(display, {"Topic", "Depth"}, 5);
+  setDisplayProperty(display, {"Topic", "History Policy"}, "Keep Last");
+  setDisplayProperty(display, {"Topic", "Reliability Policy"}, "Reliable");
+  setDisplayProperty(display, {"Topic", "Durability Policy"}, "Volatile");
+}
+
 bool DebugView::setDisplayProperty(
   rviz_common::Display * display,
   const QStringList & path,
@@ -775,6 +864,29 @@ bool DebugView::setAnyDisplayProperty(
     }
   }
   return false;
+}
+
+void DebugView::setupAvailablePathsOffsetRelay()
+{
+  const auto qos = rclcpp::QoS(rclcpp::KeepLast(5)).reliable().durability_volatile();
+
+  available_paths_offset_pub_ =
+    debug_node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+      kAvailablePathsOffsetTopic,
+      qos);
+
+  available_paths_sub_ =
+    debug_node_->create_subscription<visualization_msgs::msg::MarkerArray>(
+      kAvailablePathsInputTopic,
+      qos,
+      [this](visualization_msgs::msg::MarkerArray::ConstSharedPtr msg)
+      {
+        auto offset_msg = *msg;
+        for (auto & marker : offset_msg.markers) {
+          marker.pose.position.z += kAvailablePathsZOffset;
+        }
+        available_paths_offset_pub_->publish(offset_msg);
+      });
 }
 
 void DebugView::setupRtabSubscriptions()

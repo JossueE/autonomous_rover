@@ -23,6 +23,7 @@
 #include <rviz_common/ros_integration/ros_node_abstraction.hpp>
 #include <rviz_common/visualization_frame.hpp>
 #include <rviz_common/visualization_manager.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #ifdef HAVE_RTABMAP_MSGS
 #include <rtabmap_msgs/msg/info.hpp>
@@ -78,6 +79,9 @@ private:
     const QString & topic,
     double size_m);
   void configureMarker(rviz_common::Display * display, const QString & topic);
+  void configureRtabInfoDisplay(rviz_common::Display * display);
+  void configureRtabMapCloud(rviz_common::Display * display);
+  void configureRtabMapGraph(rviz_common::Display * display);
   bool setDisplayProperty(
     rviz_common::Display * display,
     const QStringList & path,
@@ -86,6 +90,7 @@ private:
     rviz_common::Display * display,
     const QList<QStringList> & paths,
     const QVariant & value);
+  void setupAvailablePathsOffsetRelay();
   void setupRtabSubscriptions();
   void handleTouchEvent(QTouchEvent * event);
   void handleMousePress(QMouseEvent * event);
@@ -126,6 +131,9 @@ private:
   bool rviz_initialized_;
   bool rviz_failed_;
   bool side_panel_collapsed_;
+
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr available_paths_offset_pub_;
+  rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr available_paths_sub_;
 
 #ifdef HAVE_RTABMAP_MSGS
   rclcpp::Subscription<rtabmap_msgs::msg::Info>::SharedPtr rtab_info_sub_;
