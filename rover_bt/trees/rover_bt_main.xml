@@ -385,6 +385,12 @@
         <ClearCommand/>
         <MoveRover linear="0.0" angular="-0.5" duration="1.5"/>
       </Sequence>
+      <Sequence name="VoiceSaveLoc">
+        <CheckCommand expected="save_location"/>
+        <SaveLocation location_name="{target_location}"/>
+        <Speak message="Ubicación {target_location} guardada."/>
+        <ClearCommand/>
+      </Sequence>
       <Sequence name="VoiceStatus">
         <CheckCommand expected="status"/>
         <ClearCommand/>
