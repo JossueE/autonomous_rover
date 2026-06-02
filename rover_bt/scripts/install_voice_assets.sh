@@ -4,48 +4,15 @@
 #
 # Usage: bash src/rover_bt/scripts/install_voice_assets.sh
 #
-# Assets downloaded into src/rover_bt/voice_assets/:
-#   model_en/   — Vosk English ASR model
-#   model_es/   — Vosk Spanish ASR model
-#   piper/      — Piper TTS binary + shared libs
-#   *.onnx      — Piper TTS voice model (es_MX-claude-high)
+# Assets downloaded/created inside src/rover_bt/voice_assets/:
+#   whisper_cache/  — faster-whisper model cache (tiny + base, auto-downloaded)
+#   piper/          — Piper TTS binary + shared libs
+#   *.onnx          — Piper TTS voice model (es_MX-claude-high)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASSETS="$SCRIPT_DIR/../voice_assets"
-
-# ── Vosk models ───────────────────────────────────────────────────────────────
-VOSK_EN_URL="https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip"
-VOSK_ES_URL="https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
-
-download_vosk_model() {
-    local url="$1"
-    local dest_name="$2"
-    local dest="$ASSETS/$dest_name"
-
-    if [ -d "$dest" ]; then
-        echo "  $dest_name already present, skipping."
-        return
-    fi
-
-    local zip_file
-    zip_file="$(mktemp /tmp/vosk_model_XXXXXX.zip)"
-    echo "  Downloading $(basename "$url") ..."
-    curl -L --progress-bar -o "$zip_file" "$url"
-
-    echo "  Extracting to $dest ..."
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    unzip -q "$zip_file" -d "$tmp_dir"
-    rm "$zip_file"
-
-    local extracted
-    extracted="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -1)"
-    mv "$extracted" "$dest"
-    rm -rf "$tmp_dir"
-    echo "  $dest_name ready."
-}
 
 # ── Piper TTS binary ──────────────────────────────────────────────────────────
 PIPER_VERSION="2023.11.14-2"
@@ -95,29 +62,43 @@ download_voice_model() {
 
 # ── Python runtime deps ───────────────────────────────────────────────────────
 install_python_deps() {
-    echo "  Installing Python packages (vosk, sounddevice) ..."
-    pip3 install --break-system-packages vosk sounddevice
+    echo "  Installing Python packages (faster-whisper, webrtcvad, sounddevice) ..."
+    pip3 install --break-system-packages faster-whisper webrtcvad sounddevice
     echo "  Python deps ready."
+}
+
+# ── Pre-warm Whisper model cache ──────────────────────────────────────────────
+prewarm_whisper_models() {
+    local cache_dir="$ASSETS/whisper_cache"
+    mkdir -p "$cache_dir"
+    echo "  Pre-downloading Whisper tiny + base models to $cache_dir ..."
+    python3 - <<PYEOF
+from faster_whisper import WhisperModel
+import os
+cache = "$cache_dir"
+for name in ("tiny", "base"):
+    print(f"  Fetching {name} ...")
+    WhisperModel(name, device="cpu", compute_type="int8", download_root=cache)
+    print(f"  {name} cached.")
+PYEOF
+    echo "  Whisper models ready."
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 echo "=== rover_bt: setting up voice assets ==="
 mkdir -p "$ASSETS"
 
-echo "[1/4] Vosk English model"
-download_vosk_model "$VOSK_EN_URL" "model_en"
+echo "[1/4] Python deps"
+install_python_deps
 
-echo "[2/4] Vosk Spanish model"
-download_vosk_model "$VOSK_ES_URL" "model_es"
+echo "[2/4] Whisper model cache (tiny + base)"
+prewarm_whisper_models
 
 echo "[3/4] Piper TTS binary"
 download_piper
 
 echo "[4/4] Piper voice model (es_MX-claude-high)"
 download_voice_model
-
-echo "[+] Python deps"
-install_python_deps
 
 echo ""
 echo "=== Done. Build with: colcon build --packages-select rover_bt ==="

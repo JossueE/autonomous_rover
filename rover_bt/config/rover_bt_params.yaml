@@ -64,3 +64,19 @@ rover_bt_node:
     # (patrol_waypoints: []) loads as PARAMETER_NOT_SET and aborts the node
     # at startup, so do not use []. The node defaults to an empty list.
     # patrol_waypoints: ["cocina"]
+
+voice_command_node:
+  ros__parameters:
+    # ── faster-whisper ASR ──
+    whisper_model_wake: "base"           # model for wake-word detection; "base" shares instance with cmd model
+    whisper_model_cmd: "base"            # model for command transcription (base/small)
+    whisper_device: "auto"               # "auto" | "cuda" | "cpu"
+    whisper_compute_type: "auto"         # "auto" | "float16" (cuda) | "int8" (cpu)
+
+    # ── Wake word ──
+    wake_word: "comando"                 # detected anywhere in tiny-model transcript
+    wake_timeout_sec: 10.0               # seconds to wait for command before sleeping
+
+    # ── Topics / files ──
+    command_topic: "/rover_bt/commands"
+    # waypoints_file: ""                 # defaults to config/waypoints.yaml in package

@@ -80,11 +80,9 @@ def generate_launch_description():
             executable='voice_command_node.py',
             name='voice_command_node',
             output='screen',
-            parameters=[{
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'vosk_model_es': os.path.join(pkg_dir, 'voice_assets', 'model_es'),
-                'vosk_model_en': os.path.join(pkg_dir, 'voice_assets', 'model_en'),
-                'waypoints_file': os.path.join(pkg_dir, 'config', 'waypoints.yaml'),
-            }],
+            parameters=[
+                LaunchConfiguration('params_file'),
+                {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            ],
         ),
     ])
