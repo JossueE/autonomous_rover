@@ -43,6 +43,7 @@ set(BT_CONDITION_SOURCES
   src/nodes/conditions/check_sensor_health.cpp
   src/nodes/conditions/check_nav_status.cpp
   src/nodes/conditions/check_flag.cpp
+  src/nodes/conditions/check_joy_active.cpp
 )
 
 set(BT_ACTION_SOURCES

@@ -101,6 +101,29 @@
       </Fallback>
 
       <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 4.5: JOYCON OVERLAY (manual override)         -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Joycon teleop is DETECTED, never a voice command. Whenever the
+           operator holds the deadman and uses the stick (CheckJoyActive),
+           take over: switch to TELEOP_JOYCON from any mode except EMERGENCY
+           (safety stays in charge). on_joy publishes cmd_vel directly; this
+           layer only flips the mode so status/telemetry reflect manual
+           control. The TELEOP_JOYCON dispatch case returns to IDLE once the
+           stick is released. -->
+      <Fallback name="JoyconOverlay">
+        <Sequence name="JoyTakeover">
+          <CheckJoyActive timeout_sec="1.0"/>
+          <Inverter><CheckMode expected="TELEOP_JOYCON"/></Inverter>
+          <Inverter><CheckMode expected="EMERGENCY"/></Inverter>
+          <ZeroTwist/>
+          <SetMode mode="TELEOP_JOYCON"/>
+          <Speak message="Control manual."/>
+          <ClearCommand/>
+        </Sequence>
+        <AlwaysSuccess name="JoyconPassthrough"/>
+      </Fallback>
+
+      <!-- ════════════════════════════════════════════════════ -->
       <!-- LAYER 5: MODE DISPATCH                              -->
       <!-- ════════════════════════════════════════════════════ -->
       <Switch6 name="ModeDispatch" variable="{mode}"
@@ -123,23 +146,23 @@
         <SubTree ID="TeleopVoiceSubtree" _autoremap="true"/>
 
         <!-- === TELEOP JOYCON MODE === -->
+        <!-- Entered automatically by JoyconOverlay while the stick is in use.
+             Returns to IDLE on its own once the stick is released. -->
         <Fallback name="TeleopJoyconMode">
+          <!-- Joypad button Y requests autonomous → idle, ready for a goal -->
           <Sequence name="JoyToAuto">
             <CheckCommand expected="autonomous"/>
+            <ZeroTwist/>
             <SetMode mode="IDLE"/>
-            <Speak message="Modo autónomo."/>
+            <Speak message="Listo para navegar."/>
             <ClearCommand/>
           </Sequence>
-          <Sequence name="JoyToVoice">
-            <CheckCommand expected="teleop_voice"/>
-            <SetMode mode="TELEOP_VOICE"/>
-            <Speak message="Modo voz."/>
-            <ClearCommand/>
-          </Sequence>
-          <Sequence name="JoyToPersonTrack">
-            <CheckCommand expected="person_track"/>
-            <SetMode mode="PERSON_TRACK"/>
-            <Speak message="Modo seguimiento de persona."/>
+          <!-- Stick released (deadman up) → stop and return to IDLE -->
+          <Sequence name="JoyReleased">
+            <Inverter><CheckJoyActive timeout_sec="1.0"/></Inverter>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Control manual desactivado."/>
             <ClearCommand/>
           </Sequence>
           <ClearCommand name="DiscardInJoycon"/>
@@ -305,12 +328,8 @@
         <Speak message="Modo voz. Di avanza, retrocede, izquierda, derecha o detente."/>
         <ClearCommand/>
       </Sequence>
-      <Sequence name="EnterTeleopJoycon">
-        <CheckCommand expected="teleop_joycon"/>
-        <SetMode mode="TELEOP_JOYCON"/>
-        <Speak message="Modo joycon activado."/>
-        <ClearCommand/>
-      </Sequence>
+      <!-- TELEOP_JOYCON is entered automatically by JoyconOverlay when the
+           operator uses the joystick — there is no voice/command entry. -->
       <Sequence name="EnterPersonTrack">
         <CheckCommand expected="person_track"/>
         <SetMode mode="PERSON_TRACK"/>
@@ -343,12 +362,7 @@
         <Speak message="Modo autónomo."/>
         <ClearCommand/>
       </Sequence>
-      <Sequence name="VoiceToJoy">
-        <CheckCommand expected="teleop_joycon"/>
-        <SetMode mode="TELEOP_JOYCON"/>
-        <Speak message="Modo joycon."/>
-        <ClearCommand/>
-      </Sequence>
+      <!-- No voice transition to joycon: it is entered by using the stick. -->
       <Sequence name="VoiceToPersonTrack">
         <CheckCommand expected="person_track"/>
         <SetMode mode="PERSON_TRACK"/>
