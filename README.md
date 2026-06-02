@@ -178,7 +178,175 @@ ros2 launch rover_bringup k4a_rtabmap.launch.py mode:=localization
 
 ros2 launch path_planning_dynamic planning.launch.py
 
+░▒▓snorlix ~ ▓▒░
+❯  ros2 node list
+/path_planning_node
+/rtabmap/icp_odometry
+░▒▓snorlix ~ ▓▒░
+❯  ros2 node list
+/ares_command_hub_bridge
+/imu_filter_madgwick_node
+/k4a_ros2_node
+/nmpc_controller_node
+/path_planning_node
+/pointcloud_clustering_node
+/pointcloud_roi_node
+/robot_state_publisher
+/rtabmap/icp_odometry
+/rtabmap/rtabmap
+/rtabmap/rtabmap_viz
+/rtabmap/transform_listener_impl_5db3feb4e8f0
+/rtabmap/transform_listener_impl_5f61b6b35de0
+/rtabmap/transform_listener_impl_65195b8f22d0
+/rviz2
+/transform_listener_impl_5a0eb6a934d8
+/transform_listener_impl_5bad5fce0e38
+/transform_listener_impl_622919e39a30
+/transform_listener_impl_64d16e1fe0c0
+/wheels_driver
+░▒▓snorlix ~ ▓▒░
+❯  ros2 topic list
+/all_available_paths
+/camera/color/image_raw
+/camera/image_raw
+/car
+/clicked_point
+/cmd_vel_safe
+/depth_camera/points
+/detections
+/diagnostics
+/global_planner
+/global_planner_occupancy_grid
+/global_planner_occupancy_grid_updates
+/goal_pose
+/gps/fix
+/image_raw
+/imu/data
+/initialpose
+/joint_states
+/k4a/depth/camera_info
+/k4a/depth/image_raw
+/k4a/depth/image_raw/compressed
+/k4a/depth/image_raw/compressedDepth
+/k4a/depth/image_raw/theora
+/k4a/depth/image_raw/zstd
+/k4a/depth_to_rgb/camera_info
+/k4a/depth_to_rgb/image_raw
+/k4a/depth_to_rgb/image_raw/compressed
+/k4a/depth_to_rgb/image_raw/compressedDepth
+/k4a/depth_to_rgb/image_raw/theora
+/k4a/depth_to_rgb/image_raw/zstd
+/k4a/imu
+/k4a/imu_filtered
+/k4a/ir/camera_info
+/k4a/ir/image_raw
+/k4a/ir/image_raw/compressed
+/k4a/ir/image_raw/compressedDepth
+/k4a/ir/image_raw/theora
+/k4a/ir/image_raw/zstd
+/k4a/points2
+/k4a/rgb/camera_info
+/k4a/rgb/image_raw
+/k4a/rgb/image_raw/compressed
+/k4a/rgb/image_raw/compressedDepth
+/k4a/rgb/image_raw/theora
+/k4a/rgb/image_raw/zstd
+/k4a/rgb_to_depth/camera_info
+/k4a/rgb_to_depth/image_raw
+/k4a/rgb_to_depth/image_raw/compressed
+/k4a/rgb_to_depth/image_raw/compressedDepth
+/k4a/rgb_to_depth/image_raw/theora
+/k4a/rgb_to_depth/image_raw/zstd
+/none_real_traj
+/obstacle_info
+/occupancy_grid_obstacles
+/odom
+/parameter_events
+/points_rotated
+/points_rotated_notground
+/real_trajectories_option_2
+/robot_description
+/robot_footprint_polygon
+/robot_footprint_polygon_array
+/rosout
+/rtabmap/apriltag/detections
+/rtabmap/aruco/detections
+/rtabmap/aruco_opencv/detections
+/rtabmap/cloud_ground
+/rtabmap/cloud_map
+/rtabmap/cloud_obstacles
+/rtabmap/global_path
+/rtabmap/global_path_nodes
+/rtabmap/global_pose
+/rtabmap/goal
+/rtabmap/goal_node
+/rtabmap/goal_reached
+/rtabmap/grid_prob_map
+/rtabmap/grid_prob_map_updates
+/rtabmap/info
+/rtabmap/initialpose
+/rtabmap/labels
+/rtabmap/landmark_detection
+/rtabmap/landmark_detections
+/rtabmap/landmarks
+/rtabmap/local_grid_empty
+/rtabmap/local_grid_ground
+/rtabmap/local_grid_obstacle
+/rtabmap/local_path
+/rtabmap/local_path_nodes
+/rtabmap/localization_pose
+/rtabmap/map
+/rtabmap/mapData
+/rtabmap/mapGraph
+/rtabmap/mapOdomCache
+/rtabmap/mapPath
+/rtabmap/octomap_binary
+/rtabmap/octomap_empty_space
+/rtabmap/octomap_full
+/rtabmap/octomap_global_frontier_space
+/rtabmap/octomap_grid
+/rtabmap/octomap_ground
+/rtabmap/octomap_obstacles
+/rtabmap/octomap_occupied_space
+/rtabmap/odom
+/rtabmap/odom_filtered_input_scan
+/rtabmap/odom_info
+/rtabmap/odom_info_lite
+/rtabmap/odom_last_frame
+/rtabmap/odom_local_map
+/rtabmap/odom_local_scan_map
+/rtabmap/odom_rgbd_image
+/rtabmap/odom_sensor_data/compressed
+/rtabmap/odom_sensor_data/features
+/rtabmap/odom_sensor_data/raw
+/rtabmap/rtabmap/republish_node_data
+/scan
+/sdv_trajectory
+/tf
+/tf_static
+/user_data_async
+/wheel/left_data
+/wheel/right_data
+░▒▓snorlix ~ ▓▒░
+❯  
+
+Backend A.R.E.S. Command Hub:
+
+```bash
+cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main/backend
+export PYTHONNOUSERSITE=1
+source /opt/ros/jazzy/setup.bash
+source /home/snorlix/colcon_ws/install/setup.bash
+python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Frontend A.R.E.S. Command Hub:
+
+```bash
+cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main
+npm run dev -- --host 127.0.0.1 --port 8080
+```
+
 # Don not use
 rtabmap-export --cloud --output_dir /tmp --output rtabmap_cloud ~/.ros/rtabmap.db
 pcl_ply2pcd -format 1 /tmp/rtabmap_cloud_cloud.ply ~/.ros/rtabmap_cloud_binary.pcd
-
