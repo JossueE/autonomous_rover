@@ -38,8 +38,8 @@ rover_bt_node:
 
     # ── TTS ──
     tts_enabled: true
-    piper_bin: ""                               # empty → auto-detect from install
-    piper_model: ""                             # empty → auto-detect
+    piper_bin: ""                               # empty → auto-detect <share>/voice_assets/piper/piper
+    piper_model: ""                             # empty → auto-detect <share>/voice_assets/es_MX-claude-high.onnx
 
     # ── Locations ──
     lanelet2_map: ""                            # path to .osm map for location names
