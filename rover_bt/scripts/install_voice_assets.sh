@@ -68,6 +68,13 @@ download_voice_model() {
 
 # ── Python runtime deps ───────────────────────────────────────────────────────
 install_python_deps() {
+    # sounddevice loads PortAudio (libportaudio.so.2) at import; pip does not
+    # bundle the native lib on Linux/Jetson, so install it via apt first.
+    if ! ldconfig -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
+        echo "  Installing PortAudio system library (libportaudio2) ..."
+        sudo apt-get update && sudo apt-get install -y libportaudio2
+    fi
+
     echo "  Installing Python packages (faster-whisper, webrtcvad, sounddevice) ..."
     # --break-system-packages only exists in pip >= 23.0.1 and is only needed on
     # PEP 668 "externally-managed" distros. Older pip (e.g. JetPack) rejects the flag.

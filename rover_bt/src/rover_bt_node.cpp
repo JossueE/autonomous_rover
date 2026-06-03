@@ -92,6 +92,16 @@ void RoverBTNode::init_subsystems() {
 
   std::string osm_map = this->get_parameter("lanelet2_map").as_string();
   if (!osm_map.empty()) {
+    // Resolve package:// URIs: "package://pkg/relative/path" → install share path
+    if (osm_map.rfind("package://", 0) == 0) {
+      std::string rest = osm_map.substr(10);
+      auto slash = rest.find('/');
+      if (slash != std::string::npos) {
+        std::string pkg = rest.substr(0, slash);
+        std::string rel = rest.substr(slash + 1);
+        osm_map = ament_index_cpp::get_package_share_directory(pkg) + "/" + rel;
+      }
+    }
     location_registry_->loadFromOsm(osm_map);
   }
 
