@@ -68,6 +68,18 @@ def generate_launch_description():
         }]
     )
 
+    twist_mux_node = Node(
+        package='rover_bringup',
+        executable='twist_priority_mux.py',
+        name='twist_priority_mux',
+        output='screen',
+        parameters=[{
+            'high_topic': '/cmd_vel_safe',
+            'low_topic': '/cmd_vel_nav',
+            'output_topic': '/cmd_vel'
+        }]
+    )
+
     # Node: Odometry (Encoders)
     odometry_node = Node(
         package='odometry2',
@@ -143,6 +155,7 @@ def generate_launch_description():
         use_imu_odometry_arg,
         use_wheel_odometry_arg,
         robot_state_publisher_launch,
+        twist_mux_node,
         wheels_driver_node,
         # odometry_node,
         # odometry_wheels_only_node,

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 import unicodedata
+from difflib import SequenceMatcher
 from typing import Optional
 
 import rclpy
@@ -89,6 +91,38 @@ SAVE_PREFIXES = [
 
 EMERGENCY_ALIASES = ["emergencia", "emergensia", "emerhencia", "emergencias"]
 EMERGENCY_COMMAND = "emergency_stop"
+TRAILING_NOISE = " .,!¡¿?;:"
+ARTICLES = ("la ", "el ", "los ", "las ", "al ")
+LOCATION_ALIASES = {
+    "repiza": [
+        "repiza", "repisa", "re pisa", "re piza", "repizas", "repisas",
+        "la repiza", "la repisa", "estante", "el estante", "anaquel",
+        "el anaquel",
+    ],
+    "estación": [
+        "estación", "estacion", "estaciones", "estasion", "estación.",
+        "la estación", "la estacion", "parada", "la parada", "base",
+        "la base",
+    ],
+    "estacion": [
+        "estación", "estacion", "estaciones", "estasion", "la estación",
+        "la estacion", "parada", "la parada", "base", "la base",
+    ],
+    "cocina": [
+        "cocina", "cosina", "cozina", "la cocina", "cocinas", "concina",
+    ],
+    "inicio": [
+        "inicio", "inició", "inicia", "el inicio", "punto inicial",
+        "salida", "la salida",
+    ],
+    "fin": [
+        "fin", "final", "el fin", "punto final", "meta", "la meta",
+        "destino final",
+    ],
+    "banda": [
+        "banda", "vanda", "la banda", "cinta", "la cinta", "banda transportadora",
+    ],
+}
 
 
 def normalize_text(text: str) -> str:
@@ -97,7 +131,65 @@ def normalize_text(text: str) -> str:
         c for c in unicodedata.normalize("NFD", text)
         if unicodedata.category(c) != "Mn"
     )
-    return text
+    text = text.replace("ñ", "n")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def strip_articles(text: str) -> str:
+    cleaned = text.strip(TRAILING_NOISE).strip()
+    normalized = normalize_text(cleaned)
+    for art in ARTICLES:
+        if normalized.startswith(normalize_text(art)):
+            return cleaned[len(art):].strip(TRAILING_NOISE).strip()
+    return cleaned
+
+
+def _name_variants(name: str) -> set[str]:
+    normalized = normalize_text(name)
+    variants = {normalized}
+    variants.add(normalized.replace("s", "z"))
+    variants.add(normalized.replace("z", "s"))
+    variants.add(normalized.replace("b", "v"))
+    variants.add(normalized.replace("v", "b"))
+    variants.add(normalized.replace(" ", ""))
+    return {v for v in variants if v}
+
+
+def resolve_waypoint_alias(target: str, waypoint_names: list[str]) -> Optional[str]:
+    """Map noisy STT target text to a canonical waypoint/location name."""
+    normalized_target = normalize_text(strip_articles(target))
+    if not normalized_target:
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    known_names = list(dict.fromkeys([*waypoint_names, *LOCATION_ALIASES.keys()]))
+    for name in known_names:
+        for variant in _name_variants(name):
+            candidates.append((variant, name))
+        for alias in LOCATION_ALIASES.get(name, []):
+            for variant in _name_variants(alias):
+                candidates.append((variant, name))
+
+    for variant, name in candidates:
+        if normalized_target == variant:
+            return name
+
+    for variant, name in sorted(candidates, key=lambda item: len(item[0]), reverse=True):
+        if variant and variant in normalized_target:
+            return name
+
+    best_name = None
+    best_score = 0.0
+    for variant, name in candidates:
+        score = SequenceMatcher(None, normalized_target, variant).ratio()
+        if score > best_score:
+            best_name = name
+            best_score = score
+    if best_name and best_score >= 0.82:
+        return best_name
+    return None
 
 
 def strip_wake_words(text: str, variants: list[str]) -> str:
@@ -137,18 +229,12 @@ def parse_speech_command(text: str, waypoint_names: list[str]) -> tuple[Optional
     for prefix in NAVIGATE_PREFIXES:
         normalized_prefix = normalize_text(prefix)
         if t.startswith(normalized_prefix + " ") or t == normalized_prefix:
-            tail = raw[len(prefix):].strip()
-            normalized_tail = normalize_text(tail)
-            for art in ("la ", "el ", "los ", "las "):
-                if normalized_tail.startswith(art):
-                    tail = tail[len(art):]
-                    normalized_tail = normalize_text(tail)
-                    break
-            for name in waypoint_names:
-                if normalize_text(name) in normalized_tail:
-                    return "navigate", name
+            tail = strip_articles(raw[len(prefix):])
+            resolved = resolve_waypoint_alias(tail, waypoint_names)
+            if resolved:
+                return "navigate", resolved
             if tail:
-                return "navigate", tail
+                return "navigate", tail.strip(TRAILING_NOISE).strip()
             return None, None
 
     for key in sorted(COMMAND_MAP, key=len, reverse=True):
@@ -190,7 +276,7 @@ class VoiceCommandNode(Node):
 
         loader = LoadModel()
         wake_model = loader.ensure_model("wake_word")[0]
-        stt_model = loader.ensure_model("stt")[0]
+        stt_model = loader.ensure_model("stt")[1]
         tts_models = loader.ensure_model("tts")
         if len(tts_models) < 2:
             raise RuntimeError("La seccion 'tts' de models.yml debe incluir modelo .onnx y .json")

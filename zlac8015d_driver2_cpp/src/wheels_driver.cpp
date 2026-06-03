@@ -105,7 +105,7 @@ public:
     pub_left_data_ = this->create_publisher<std_msgs::msg::Float64>("wheel/left_data", 10); //Recommendation: Send both in one message
     pub_right_data_ = this->create_publisher<std_msgs::msg::Float64>("wheel/right_data", 10);
     sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
-      "cmd_vel_safe", 10, std::bind(&ZlacNode::command_vel_CB, this, std::placeholders::_1));
+      "cmd_vel", 10, std::bind(&ZlacNode::command_vel_CB, this, std::placeholders::_1));
 
     // ----------------------------------------------- Parameter Callback ------------------------------------------------
 
@@ -314,15 +314,15 @@ private:
     }    
 
     // If more than one publisher   
-    const size_t pubs = count_publishers("cmd_vel_safe");
+    const size_t pubs = count_publishers("cmd_vel");
     if (pubs > 1) {
-      RCLCPP_FATAL(rclcpp::get_logger(node_name), "More than one publisher on cmd_vel_safe (%zu). Stopping robot and shutting down.", pubs);
+      RCLCPP_FATAL(rclcpp::get_logger(node_name), "More than one publisher on cmd_vel (%zu). Stopping robot and shutting down.", pubs);
       motors_.set_sync_rpm(0,0, resolution_mode_);
       // Destroy node
       rclcpp::shutdown();
     }
     else if (pubs == 0){
-      RCLCPP_WARN(rclcpp::get_logger(node_name), "No publishers on cmd_vel_safe (%zu). Stopping robot and locking wheels for security.", pubs);
+      RCLCPP_WARN(rclcpp::get_logger(node_name), "No publishers on cmd_vel (%zu). Stopping robot and locking wheels for security.", pubs);
       movement_lock_timer_->cancel();
       motors_.enable_motor();
       motors_.set_sync_rpm(0,0, resolution_mode_);

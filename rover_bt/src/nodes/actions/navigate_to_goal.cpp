@@ -20,14 +20,27 @@ BT::NodeStatus NavigateToGoal::onStart() {
   if (!loc_opt) {
     return BT::NodeStatus::FAILURE;
   }
-  target_location_ = loc_opt.value();
 
   std::shared_ptr<SharedContext> ctx;
   if (!config().blackboard->get("context", ctx) || !ctx || !ctx->node) {
     return BT::NodeStatus::FAILURE;
   }
 
-  RCLCPP_INFO(ctx->node->get_logger(), "NavigateToGoal: Starting Action Client navigation to '%s'", target_location_.c_str());
+  if (!sendGoalForLocation(loc_opt.value(), ctx)) {
+    return BT::NodeStatus::FAILURE;
+  }
+
+  return BT::NodeStatus::RUNNING;
+}
+
+bool NavigateToGoal::sendGoalForLocation(const std::string& location,
+                                         const std::shared_ptr<SharedContext>& ctx) {
+  target_location_ = location;
+  const uint64_t sequence = goal_sequence_.fetch_add(1) + 1;
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "NavigateToGoal: Starting Action Client navigation to '%s'",
+              target_location_.c_str());
 
   // Reset state flags
   goal_sent_ = false;
@@ -63,22 +76,24 @@ BT::NodeStatus NavigateToGoal::onStart() {
       if (ctx->tts) {
         ctx->tts->speak("No conozco la ubicación " + target_location_);
       }
-      return BT::NodeStatus::FAILURE;
+      return false;
     }
   } else {
     RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: LocationRegistry is null!");
     config().blackboard->set("nav_status", std::string("failed"));
-    return BT::NodeStatus::FAILURE;
+    return false;
   }
 
   // Create action client
-  action_client_ = rclcpp_action::create_client<ActionType>(ctx->node, "navigate_to_goal");
+  if (!action_client_) {
+    action_client_ = rclcpp_action::create_client<ActionType>(ctx->node, "navigate_to_goal");
+  }
 
   // Wait for Action Server to be available (briefly)
   if (!action_client_->wait_for_action_server(std::chrono::milliseconds(500))) {
     RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: Action server 'navigate_to_goal' not available!");
     config().blackboard->set("nav_status", std::string("planner_timeout"));
-    return BT::NodeStatus::FAILURE;
+    return false;
   }
 
   // Setup goal message
@@ -101,7 +116,10 @@ BT::NodeStatus NavigateToGoal::onStart() {
   // Send Options
   auto send_goal_options = rclcpp_action::Client<ActionType>::SendGoalOptions();
   
-  send_goal_options.goal_response_callback = [this, ctx](std::shared_ptr<GoalHandle> handle) {
+  send_goal_options.goal_response_callback = [this, ctx, sequence](std::shared_ptr<GoalHandle> handle) {
+    if (sequence != goal_sequence_.load()) {
+      return;
+    }
     if (!handle) {
       RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: Goal request rejected by action server");
       goal_failed_.store(true);
@@ -112,13 +130,19 @@ BT::NodeStatus NavigateToGoal::onStart() {
     }
   };
 
-  send_goal_options.feedback_callback = [this, ctx](std::shared_ptr<GoalHandle> handle, const std::shared_ptr<const ActionType::Feedback> feedback) {
+  send_goal_options.feedback_callback = [this, ctx, sequence](std::shared_ptr<GoalHandle> handle, const std::shared_ptr<const ActionType::Feedback> feedback) {
     (void)handle;
+    if (sequence != goal_sequence_.load()) {
+      return;
+    }
     RCLCPP_DEBUG(ctx->node->get_logger(), "NavigateToGoal Feedback: distance remaining: %.2f", feedback->distance_remaining);
     config().blackboard->set("goal_distance", static_cast<double>(feedback->distance_remaining));
   };
 
-  send_goal_options.result_callback = [this, ctx](const GoalHandle::WrappedResult& result) {
+  send_goal_options.result_callback = [this, ctx, sequence](const GoalHandle::WrappedResult& result) {
+    if (sequence != goal_sequence_.load()) {
+      return;
+    }
     if (result.code == rclcpp_action::ResultCode::SUCCEEDED && result.result && result.result->success) {
       RCLCPP_INFO(ctx->node->get_logger(), "NavigateToGoal: Arrived at goal successfully!");
       config().blackboard->set("nav_status", std::string("succeeded"));
@@ -134,17 +158,50 @@ BT::NodeStatus NavigateToGoal::onStart() {
   goal_sent_ = true;
   config().blackboard->set("nav_status", std::string("navigating"));
 
-  return BT::NodeStatus::RUNNING;
+  return true;
 }
 
 BT::NodeStatus NavigateToGoal::onRunning() {
+  auto loc_opt = getInput<std::string>("location");
+  if (loc_opt && loc_opt.value() != target_location_) {
+    std::shared_ptr<SharedContext> ctx;
+    if (!config().blackboard->get("context", ctx) || !ctx || !ctx->node) {
+      return BT::NodeStatus::FAILURE;
+    }
+
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "NavigateToGoal: target changed from '%s' to '%s'. Preempting active goal.",
+                target_location_.c_str(), loc_opt.value().c_str());
+    cancelActiveGoal(ctx, "target changed");
+    if (!sendGoalForLocation(loc_opt.value(), ctx)) {
+      return BT::NodeStatus::FAILURE;
+    }
+    return BT::NodeStatus::RUNNING;
+  }
+
   if (goal_failed_.load()) {
     return BT::NodeStatus::FAILURE;
   }
   if (goal_completed_.load()) {
     return BT::NodeStatus::SUCCESS;
   }
+  config().blackboard->set("nav_status", std::string("navigating"));
   return BT::NodeStatus::RUNNING;
+}
+
+void NavigateToGoal::cancelActiveGoal(const std::shared_ptr<SharedContext>& ctx,
+                                      const std::string& reason) {
+  if (action_client_ && goal_handle_ &&
+      !goal_completed_.load() && !goal_failed_.load()) {
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "NavigateToGoal: Canceling active goal (%s).", reason.c_str());
+    try {
+      action_client_->async_cancel_goal(goal_handle_);
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "NavigateToGoal: cancel skipped: %s", e.what());
+    }
+  }
 }
 
 void NavigateToGoal::onHalted() {
@@ -157,17 +214,9 @@ void NavigateToGoal::onHalted() {
     // throw rclcpp_action's "Goal handle is not known to this client", crashing
     // the whole BT node. Skip cancellation for already-terminal goals, and guard
     // the live-cancel path defensively so a late state transition can't abort us.
-    if (action_client_ && goal_handle_ &&
-        !goal_completed_.load() && !goal_failed_.load()) {
-      RCLCPP_INFO(ctx->node->get_logger(), "NavigateToGoal: Navigation halted. Canceling action goal.");
-      try {
-        action_client_->async_cancel_goal(goal_handle_);
-      } catch (const std::exception& e) {
-        RCLCPP_WARN(ctx->node->get_logger(),
-                    "NavigateToGoal: cancel on halt skipped: %s", e.what());
-      }
-    }
+    cancelActiveGoal(ctx, "halted");
   }
+  goal_sequence_.fetch_add(1);
   config().blackboard->set("nav_status", std::string("idle"));
 }
 

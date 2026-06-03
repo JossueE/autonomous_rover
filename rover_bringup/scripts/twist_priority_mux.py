@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Lightweight priority Twist multiplexer (stand-in for the `twist_mux` package).
 
-The ZLAC `wheels_driver` enforces *exactly one* publisher on `/cmd_vel_safe`
+The ZLAC `wheels_driver` enforces *exactly one* publisher on `/cmd_vel`
 (zlac8015d_driver2_cpp/src/wheels_driver.cpp) and FATAL-exits if it sees more
 than one. Both `nmpc_controller_node` (navigation velocities) and `rover_bt_node`
 (ZeroTwist / teleop / emergency) want to drive the wheels, which is two
 publishers. This node is the single publisher on the output topic and merges the
 two sources by priority:
 
-  - cmd_vel_bt  (rover_bt)  -> higher priority  : stop/emergency authority wins
+  - cmd_vel_safe (rover_bt) -> higher priority  : stop/emergency authority wins
   - cmd_vel_nav (NMPC)      -> lower  priority  : passes through when BT is quiet
 
 Each input is only considered while it has published within `timeout` seconds, so
@@ -25,8 +25,8 @@ class TwistPriorityMux(Node):
     def __init__(self):
         super().__init__("twist_priority_mux")
 
-        self.declare_parameter("output_topic", "/cmd_vel_safe")
-        self.declare_parameter("high_topic", "/cmd_vel_bt")
+        self.declare_parameter("output_topic", "/cmd_vel")
+        self.declare_parameter("high_topic", "/cmd_vel_safe")
         self.declare_parameter("low_topic", "/cmd_vel_nav")
         self.declare_parameter("timeout", 0.5)      # s; input considered stale after this
         self.declare_parameter("rate_hz", 20.0)
