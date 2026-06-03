@@ -5,7 +5,7 @@
 # Usage: bash src/rover_bt/scripts/install_voice_assets.sh
 #
 # Assets downloaded/created inside src/rover_bt/voice_assets/:
-#   whisper_cache/  — faster-whisper model cache (tiny + base, auto-downloaded)
+#   whisper_cache/  — faster-whisper model cache (base, auto-downloaded)
 #   piper/          — Piper TTS binary + shared libs
 #   *.onnx          — Piper TTS voice model (es_MX-claude-high)
 
@@ -83,12 +83,12 @@ install_python_deps() {
 prewarm_whisper_models() {
     local cache_dir="$ASSETS/whisper_cache"
     mkdir -p "$cache_dir"
-    echo "  Pre-downloading Whisper tiny + base models to $cache_dir ..."
+    echo "  Pre-downloading Whisper base model to $cache_dir ..."
     python3 - <<PYEOF
 from faster_whisper import WhisperModel
 import os
 cache = "$cache_dir"
-for name in ("tiny", "base"):
+for name in ("base",):
     print(f"  Fetching {name} ...")
     WhisperModel(name, device="cpu", compute_type="int8", download_root=cache)
     print(f"  {name} cached.")
@@ -103,7 +103,7 @@ mkdir -p "$ASSETS"
 echo "[1/4] Python deps"
 install_python_deps
 
-echo "[2/4] Whisper model cache (tiny + base)"
+echo "[2/4] Whisper model cache (base)"
 prewarm_whisper_models
 
 echo "[3/4] Piper TTS binary"
