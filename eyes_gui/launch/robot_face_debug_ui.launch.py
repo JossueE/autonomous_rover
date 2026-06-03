@@ -9,4 +9,9 @@ def generate_launch_description():
             executable='robot_face_debug_ui',
             output='screen',
         ),
+        Node(
+            package='eyes_gui',
+            executable='face_emotion_controller',
+            output='screen',
+        ),
     ])

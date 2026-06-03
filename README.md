@@ -68,33 +68,7 @@ ros2 launch rtabmap_launch rtabmap.launch.py \
 - Localization against an existing RTAB-Map database uses the same EKF odometry input:
 
 ```bash
-ros2 launch rtabmap_launch rtabmap.launch.py \
-  localization:=true \
-  visual_odometry:=false \
-  odom_topic:=/odom \
-  publish_tf_odom:=false \
-  rtabmap_args:="\
-  --Reg/Force3DoF true \
-  --RGBD/ForceOdom3DoF true \
-  --Grid/3D false \
-  --Grid/RangeMax 4.5 \
-  --Grid/MaxGroundHeight 0.10 \
-  --Grid/MaxObstacleHeight 1.20 \
-  --Grid/CellSize 0.05" \
-  rgb_topic:=/k4a/rgb/image_raw \
-  depth_topic:=/k4a/depth_to_rgb/image_raw \
-  camera_info_topic:=/k4a/rgb/camera_info \
-  scan_cloud_topic:=/k4a/points2 \
-  subscribe_scan_cloud:=true \
-  imu_topic:=/imu/data \
-  frame_id:=base_footprint \
-  approx_sync:=true \
-  approx_sync_max_interval:=0.02 \
-  wait_for_transform:=2.0 \
-  queue_size:=20 \
-  qos:=2 \
-  qos_odom:=1 \
-  rviz:=true
+ 
 ```
 
 
