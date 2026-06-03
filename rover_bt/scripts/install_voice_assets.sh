@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #!/bin/bash
 # Download voice model assets and install Python runtime deps for rover_bt.
 # Run once after cloning the repo, before building with colcon.
@@ -9,65 +10,39 @@
 #   piper/          — Piper TTS binary + shared libs
 #   *.onnx          — Piper TTS voice model (es_MX-claude-high)
 
+=======
+#!/usr/bin/env bash
+>>>>>>> 95262d0 (new voice)
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ASSETS="$SCRIPT_DIR/../voice_assets"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+SOURCE_MODELS_FILE="$SCRIPT_DIR/../config/models.yml"
+INSTALLED_MODELS_FILE="$SCRIPT_DIR/../../share/rover_bt/config/models.yml"
 
-# ── Piper TTS binary ──────────────────────────────────────────────────────────
-PIPER_VERSION="2023.11.14-2"
-case "$(uname -m)" in
-    x86_64)          PIPER_ARCHIVE="piper_linux_x86_64.tar.gz" ;;
-    aarch64|arm64)   PIPER_ARCHIVE="piper_linux_aarch64.tar.gz" ;;
-    armv7l)          PIPER_ARCHIVE="piper_linux_armv7l.tar.gz" ;;
-    *) echo "  WARNING: unknown arch $(uname -m); defaulting to x86_64 Piper build" >&2
-       PIPER_ARCHIVE="piper_linux_x86_64.tar.gz" ;;
-esac
-PIPER_URL="https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/${PIPER_ARCHIVE}"
+if [[ -f "$SOURCE_MODELS_FILE" ]]; then
+  MODELS_FILE="$SOURCE_MODELS_FILE"
+  CACHE_DIR="$SCRIPT_DIR/../voice_assets"
+else
+  MODELS_FILE="$INSTALLED_MODELS_FILE"
+  WORKSPACE_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." &>/dev/null && pwd)"
+  CACHE_DIR="${ROVER_BT_VOICE_ASSETS:-$WORKSPACE_ROOT/rover_bt/voice_assets}"
+fi
 
-download_piper() {
-    local dest="$ASSETS/piper"
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+die() { echo "ERROR: $*" >&2; exit 1; }
 
-    if [ -d "$dest" ]; then
-        echo "  piper/ already present, skipping."
-        return
-    fi
-
-    local tar_file
-    tar_file="$(mktemp /tmp/piper_XXXXXX.tar.gz)"
-    echo "  Downloading Piper $PIPER_VERSION ..."
-    curl -L --progress-bar -o "$tar_file" "$PIPER_URL"
-
-    echo "  Extracting to $dest ..."
-    mkdir -p "$dest"
-    tar -xzf "$tar_file" -C "$dest" --strip-components=1
-    rm "$tar_file"
-
-    chmod +x "$dest/piper"
-    echo "  piper/ ready."
+fetch() {
+  local url="$1" out="$2"
+  if have_cmd curl; then
+    curl -L --fail --retry 3 -o "$out" "$url"
+  else
+    have_cmd wget || die "Necesitas curl o wget"
+    wget -O "$out" "$url"
+  fi
 }
 
-# ── Piper voice model (es_MX-claude-high) ─────────────────────────────────────
-VOICE_MODEL="es_MX-claude-high.onnx"
-VOICE_CONFIG="es_MX-claude-high.onnx.json"
-VOICE_BASE_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high"
-
-download_voice_model() {
-    local model_path="$ASSETS/$VOICE_MODEL"
-
-    if [ -f "$model_path" ]; then
-        echo "  $VOICE_MODEL already present, skipping."
-        return
-    fi
-
-    echo "  Downloading $VOICE_MODEL ..."
-    curl -L --progress-bar -o "$model_path" "$VOICE_BASE_URL/$VOICE_MODEL"
-    curl -L --progress-bar -o "$ASSETS/$VOICE_CONFIG" "$VOICE_BASE_URL/$VOICE_CONFIG"
-    echo "  $VOICE_MODEL ready."
-}
-
-# ── Python runtime deps ───────────────────────────────────────────────────────
 install_python_deps() {
+<<<<<<< HEAD
     # sounddevice loads PortAudio (libportaudio.so.2) at import; pip does not
     # bundle the native lib on Linux/Jetson, so install it via apt first.
     if ! ldconfig -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
@@ -81,11 +56,74 @@ install_python_deps() {
     local break_flag=""
     if pip3 install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
         break_flag="--break-system-packages"
-    fi
-    pip3 install $break_flag faster-whisper webrtcvad sounddevice
-    echo "  Python deps ready."
+=======
+  echo "[deps] Instalando dependencias Python..."
+  local break_flag=""
+  if python3 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+    break_flag="--break-system-packages"
+  fi
+  python3 -m pip install $break_flag \
+    pyaudio \
+    vosk \
+    webrtcvad \
+    openai-whisper \
+    piper-tts \
+    numpy \
+    pyyaml
 }
 
+download_file_or_zip() {
+  local url="$1"
+  local out_dir="$2"
+  local name_hint="${3:-}"
+  local fname ext tmp out dname
+
+  [[ -n "$url" ]] || { echo "url vacia"; return 1; }
+  [[ "$url" == -* ]] && { echo "URL invalida: empieza con '-'"; return 1; }
+  mkdir -p "$out_dir"
+
+  fname="$(basename "${url%%\?*}")"
+  ext="${fname##*.}"
+
+  if [[ "$ext" == "zip" && "$fname" != "$ext" ]]; then
+    dname="${name_hint:-${fname%.zip}}"
+    if [[ -d "$out_dir/$dname" ]]; then
+      echo "  - ya existe: $out_dir/$dname"
+      return 0
+>>>>>>> 95262d0 (new voice)
+    fi
+    tmp="$out_dir/${name_hint:-pkg}.zip"
+    echo "  - bajando ZIP: $url"
+    fetch "$url" "$tmp"
+    have_cmd unzip || die "Necesitas 'unzip' (sudo apt-get install -y unzip)"
+    echo "  - descomprimiendo en $out_dir"
+    unzip -q -o "$tmp" -d "$out_dir"
+    rm -f "$tmp"
+    return 0
+  fi
+
+  out="$out_dir/$fname"
+  case "${name_hint##*.}" in
+    pt|onnx|gguf|json|bin) out="$out_dir/$name_hint" ;;
+  esac
+
+  if [[ "$url" == *"drive.google.com"* || "$fname" == "uc" || "$fname" == "open" ]]; then
+    [[ -n "$name_hint" ]] && out="$out_dir/$name_hint"
+  fi
+
+  if [[ "$out" == "$out_dir/$fname" && "$fname" != *.* && -n "$name_hint" ]]; then
+    out="$out_dir/$name_hint"
+  fi
+
+  if [[ -f "$out" ]]; then
+    echo "  - ya existe: $out"
+  else
+    echo "  - bajando: $url -> $out"
+    fetch "$url" "$out"
+  fi
+}
+
+<<<<<<< HEAD
 # ── Pre-warm Whisper model cache ──────────────────────────────────────────────
 prewarm_whisper_models() {
     local cache_dir="$ASSETS/whisper_cache"
@@ -101,15 +139,41 @@ for name in ("base",):
     print(f"  {name} cached.")
 PYEOF
     echo "  Whisper models ready."
+=======
+download_section() {
+  local section="$1"
+  local label="$2"
+  local len
+
+  len="$(yq -r "(.${section} // []) | length" "$MODELS_FILE" 2>/dev/null || echo 0)"
+  if [[ -z "$len" || "$len" == "0" ]]; then
+    return 0
+  fi
+
+  echo "[$label] Descargando modelos..."
+  for i in $(seq 0 $((len - 1))); do
+    local name url
+    name="$(yq -r ".${section}[$i].name // \"\"" "$MODELS_FILE")"
+    url="$(yq -r ".${section}[$i].url // \"\"" "$MODELS_FILE")"
+    [[ -n "$url" && "$url" != "null" ]] || continue
+    download_file_or_zip "$url" "$CACHE_DIR/$section" "$name"
+  done
+>>>>>>> 95262d0 (new voice)
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-echo "=== rover_bt: setting up voice assets ==="
-mkdir -p "$ASSETS"
+[[ -f "$MODELS_FILE" ]] || die "No se encontro $MODELS_FILE."
+have_cmd yq || die "Falta 'yq'. Instala con: sudo snap install yq"
+mkdir -p "$CACHE_DIR"
 
-echo "[1/4] Python deps"
+echo "[*] Usando catalogo: $MODELS_FILE"
+echo "[*] Cache: $CACHE_DIR"
+
 install_python_deps
+download_section "stt" "STT"
+download_section "wake_word" "VOSK"
+download_section "tts" "TTS"
 
+<<<<<<< HEAD
 echo "[2/4] Whisper model cache (base)"
 prewarm_whisper_models
 
@@ -121,3 +185,6 @@ download_voice_model
 
 echo ""
 echo "=== Done. Build with: colcon build --packages-select rover_bt ==="
+=======
+echo "OK. Modelos listos en: $CACHE_DIR"
+>>>>>>> 95262d0 (new voice)

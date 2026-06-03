@@ -2,7 +2,6 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
-#include <filesystem>
 
 // Include ALL custom BT nodes
 #include "rover_bt/nodes/conditions/check_mode.hpp"
@@ -64,6 +63,7 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("tts_enabled", true);
   this->declare_parameter("piper_bin", "");
   this->declare_parameter("piper_model", "");
+  this->declare_parameter("tts_topic", "/rover_bt/tts/say");
   this->declare_parameter("lanelet2_map", "");
   this->declare_parameter("dynamic_waypoints_file", "");
   // patrol_waypoints: declared with dynamic typing so it tolerates being set
@@ -105,35 +105,10 @@ void RoverBTNode::init_subsystems() {
     location_registry_->loadFromOsm(osm_map);
   }
 
-  std::string piper_bin = this->get_parameter("piper_bin").as_string();
-  std::string piper_model = this->get_parameter("piper_model").as_string();
   bool tts_enabled = this->get_parameter("tts_enabled").as_bool();
-
-  // Auto-detect Piper assets from the install share when the params are left
-  // empty. install_voice_assets.sh stages them under voice_assets/, which
-  // CMake installs to <share>/rover_bt/voice_assets/.
-  if (tts_enabled && (piper_bin.empty() || piper_model.empty())) {
-    std::string share_dir = ament_index_cpp::get_package_share_directory("rover_bt");
-    std::string assets = share_dir + "/voice_assets";
-
-    if (piper_bin.empty()) {
-      std::string candidate = assets + "/piper/piper";
-      if (std::filesystem::exists(candidate)) {
-        piper_bin = candidate;
-        RCLCPP_INFO(this->get_logger(), "Auto-detected piper_bin: %s", piper_bin.c_str());
-      }
-    }
-    if (piper_model.empty()) {
-      std::string candidate = assets + "/es_MX-claude-high.onnx";
-      if (std::filesystem::exists(candidate)) {
-        piper_model = candidate;
-        RCLCPP_INFO(this->get_logger(), "Auto-detected piper_model: %s", piper_model.c_str());
-      }
-    }
-  }
-
   if (tts_enabled) {
-    tts_ = std::make_unique<TTSClient>(this->get_logger(), piper_bin, piper_model);
+    std::string tts_topic = this->get_parameter("tts_topic").as_string();
+    tts_ = std::make_unique<TTSClient>(this, this->get_logger(), tts_topic);
   }
 
   // Create SharedContext
