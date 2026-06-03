@@ -42,7 +42,7 @@ rover_bt_node:
     piper_model: ""                             # empty → auto-detect <share>/voice_assets/es_MX-claude-high.onnx
 
     # ── Locations ──
-    lanelet2_map: ""                            # path to .osm map for location names
+    lanelet2_map: "package://rover_bringup/maps/test1.osm"  # path to .osm map for location names
     dynamic_waypoints_file: ""                  # path to persisted dynamic locations
 
     # ── RTAB-Map lifecycle ──
