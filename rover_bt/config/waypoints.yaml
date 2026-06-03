@@ -8,3 +8,9 @@ waypoints:
     theta: 1.57
     lanelet: ""
     frame: "map"
+  estacion:
+    x: -3.4708
+    y: -3.0480
+    theta: -1.1577
+    lanelet: "estación"
+    frame: "map"

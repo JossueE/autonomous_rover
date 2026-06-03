@@ -23,6 +23,7 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>rover_bt</depend>
 
   <exec_depend>map_msgs</exec_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>

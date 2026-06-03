@@ -26,6 +26,7 @@ find_package(rviz_rendering REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(rover_bt REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets)
 
 find_package(map_msgs QUIET)
@@ -51,7 +52,16 @@ add_executable(${EXECUTABLE_NAME}
   src/main_window.cpp
 )
 
+add_executable(face_emotion_controller
+  src/face_emotion_controller.cpp
+)
+
 target_include_directories(${EXECUTABLE_NAME}
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_include_directories(face_emotion_controller
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -68,6 +78,12 @@ ament_target_dependencies(${EXECUTABLE_NAME}
   sensor_msgs
   std_msgs
   visualization_msgs
+)
+
+ament_target_dependencies(face_emotion_controller
+  nav_msgs
+  rclcpp
+  rover_bt
 )
 
 if(map_msgs_FOUND)
@@ -91,8 +107,11 @@ rosidl_get_typesupport_target(cpp_typesupport_target
   "rosidl_typesupport_cpp"
 )
 target_link_libraries(${EXECUTABLE_NAME} "${cpp_typesupport_target}")
+target_link_libraries(face_emotion_controller "${cpp_typesupport_target}")
 
-install(TARGETS ${EXECUTABLE_NAME}
+install(TARGETS
+  ${EXECUTABLE_NAME}
+  face_emotion_controller
   DESTINATION lib/${PROJECT_NAME}
 )
 
