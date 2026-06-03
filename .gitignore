@@ -24,10 +24,7 @@ __pycache__/
 *.ie
 *.mat
 *.ort
-rover_bt/voice_assets/model_en/
-rover_bt/voice_assets/model_es/
-rover_bt/voice_assets/piper/
-rover_bt/voice_assets/whisper_cache/
+rover_bt/voice_assets/*
 
 # ── Editor / tooling ─────────────────────────────────────────────────────────
 .vscode/

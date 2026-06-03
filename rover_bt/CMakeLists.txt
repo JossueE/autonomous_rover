@@ -114,11 +114,19 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(DIRECTORY
+  scripts/stt
+  scripts/tts
+  scripts/config
+  scripts/utils
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY launch config trees voice_assets
+install(DIRECTORY launch config trees
   DESTINATION share/${PROJECT_NAME}
 )
 

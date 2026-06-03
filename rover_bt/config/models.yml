@@ -1,0 +1,21 @@
+stt:
+#Whisper models
+  - name: base.pt
+    url: "https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt"
+
+  - name: small.pt
+    url: "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt"
+
+tts:
+#Piper Models
+  - name: es_419-Octybot-medium.onnx
+    url: "https://drive.google.com/uc?export=download&id=1XwlJHb9tIEBkZP21uj-HKznvuJ-NSRJS"
+    
+  - name: es_419-Octybot-medium.onnx.json
+    url: "https://drive.google.com/uc?export=download&id=1OdOvI7z5GBilV-jRNjmCR8F3G15q2Bx4"
+
+    
+wake_word:
+#Vosk Models
+  - name: vosk-model-small-es-0.42
+    url: https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip
