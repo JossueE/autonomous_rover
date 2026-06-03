@@ -145,8 +145,9 @@ void RoverBTNode::init_ros_interfaces() {
 
   // Subscribers
   std::string odom_topic = this->get_parameter("odom_topic").as_string();
+  auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic, 10, std::bind(&RoverBTNode::on_odom, this, std::placeholders::_1));
+    odom_topic, odom_qos, std::bind(&RoverBTNode::on_odom, this, std::placeholders::_1));
 
   std::string amcl_pose_topic = this->get_parameter("amcl_pose_topic").as_string();
   amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
