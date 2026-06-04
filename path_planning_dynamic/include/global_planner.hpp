@@ -40,6 +40,7 @@ private:
     double      x_offset_         = 0.0;
     double      y_offset_         = 0.0;
     std::string map_path_;
+    lanelet::LaneletMapPtr map_;
 
     // Waypoint storage
     std::vector<std::vector<point_struct>> neighbor_points_;
@@ -167,6 +168,7 @@ public:
     std::vector<point_struct>     getAllAllWaypointsStruct();
     nav_msgs::msg::OccupancyGrid  getOccupancyGrid();
     bool                          isOccupancyGridReady();
+    bool                          findLaneletAt(double x, double y, int &lanelet_id, bool &inside) const;
 };
 
 #endif // GLOBAL_PLANNER_HPP

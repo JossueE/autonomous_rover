@@ -18,6 +18,8 @@ namespace
 {
 constexpr double kEndpointConnectDist = 1.5;
 constexpr double kLateralChangePenalty = 2.0;
+constexpr double kLaneletNearestFallbackDist = 1.0;
+constexpr double kPolygonBoundaryTolerance = 0.05;
 
 struct LaneletGeometry
 {
@@ -48,6 +50,90 @@ double pointDistance3d(const lanelet::ConstPoint3d &a, const lanelet::ConstPoint
     const double dy = a.y() - b.y();
     const double dz = a.z() - b.z();
     return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double pointToSegmentDistance2d(double px, double py,
+                                double ax, double ay,
+                                double bx, double by)
+{
+    const double abx = bx - ax;
+    const double aby = by - ay;
+    const double apx = px - ax;
+    const double apy = py - ay;
+    const double len2 = abx * abx + aby * aby;
+
+    if (len2 < 1e-12)
+    {
+        const double dx = px - ax;
+        const double dy = py - ay;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    const double t = std::max(0.0, std::min(1.0, (apx * abx + apy * aby) / len2));
+    const double cx = ax + t * abx;
+    const double cy = ay + t * aby;
+    const double dx = px - cx;
+    const double dy = py - cy;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+double pointToCenterlineDistance2d(double x, double y, const lanelet::ConstLineString3d &points)
+{
+    if (points.empty())
+        return std::numeric_limits<double>::infinity();
+    if (points.size() == 1)
+    {
+        const double dx = x - points.front().x();
+        const double dy = y - points.front().y();
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    double best = std::numeric_limits<double>::infinity();
+    for (size_t i = 1; i < points.size(); ++i)
+    {
+        best = std::min(best, pointToSegmentDistance2d(
+            x, y,
+            points[i - 1].x(), points[i - 1].y(),
+            points[i].x(), points[i].y()));
+    }
+    return best;
+}
+
+bool pointInPolygon(double x, double y, const std::vector<std::pair<double, double>> &polygon)
+{
+    if (polygon.size() < 3)
+        return false;
+
+    bool inside = false;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+    {
+        const auto &[xi, yi] = polygon[i];
+        const auto &[xj, yj] = polygon[j];
+
+        if (pointToSegmentDistance2d(x, y, xi, yi, xj, yj) <= kPolygonBoundaryTolerance)
+            return true;
+
+        const bool crosses = ((yi > y) != (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (crosses)
+            inside = !inside;
+    }
+    return inside;
+}
+
+std::vector<std::pair<double, double>> laneletPolygon2d(const lanelet::ConstLanelet &ll)
+{
+    std::vector<std::pair<double, double>> polygon;
+    polygon.reserve(ll.leftBound().size() + ll.rightBound().size());
+
+    for (const auto &p : ll.leftBound())
+        polygon.emplace_back(p.x(), p.y());
+
+    const auto &right_bound = ll.rightBound();
+    for (int i = static_cast<int>(right_bound.size()) - 1; i >= 0; --i)
+        polygon.emplace_back(right_bound[i].x(), right_bound[i].y());
+
+    return polygon;
 }
 
 double lineStringLength(const lanelet::ConstLineString3d &points)
@@ -433,6 +519,7 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
         std::cerr << yellow << "[GlobalPlanner] Skipped " << skipped_points
                   << " point(s) lacking local_x/local_y." << reset << std::endl;
     }
+    map_ = map;
 
     if (!start_lanelet_name_.empty() &&
         !resolveLaneletName(map, start_lanelet_name_, start_lanelet_id_, "start_lanelet_name"))
@@ -902,6 +989,51 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
 std::vector<point_struct> GlobalPlanner::getAllAllWaypointsStruct()
 {
     return all_waypoints_;
+}
+
+bool GlobalPlanner::findLaneletAt(double x, double y, int &lanelet_id, bool &inside) const
+{
+    lanelet_id = 0;
+    inside = false;
+
+    if (!map_)
+        return false;
+
+    double best_distance = std::numeric_limits<double>::infinity();
+    lanelet::Id best_id = 0;
+
+    for (const auto &ll : map_->laneletLayer)
+    {
+        if (isCrosswalkLanelet(ll))
+            continue;
+
+        const auto centerline = ll.centerline3d();
+        if (centerline.empty())
+            continue;
+
+        if (pointInPolygon(x, y, laneletPolygon2d(ll)))
+        {
+            lanelet_id = static_cast<int>(ll.id());
+            inside = true;
+            return true;
+        }
+
+        const double distance = pointToCenterlineDistance2d(x, y, centerline);
+        if (distance < best_distance)
+        {
+            best_distance = distance;
+            best_id = ll.id();
+        }
+    }
+
+    if (best_id != 0 && best_distance <= kLaneletNearestFallbackDist)
+    {
+        lanelet_id = static_cast<int>(best_id);
+        inside = false;
+        return true;
+    }
+
+    return false;
 }
 
 // ===================================================================
