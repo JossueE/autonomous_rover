@@ -32,6 +32,7 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<double>("planner.sample_distance", 0.0);
     this->declare_parameter<double>("planner.square_size_m", 1.6);
     this->declare_parameter<double>("planner.safe_clear", 0.2);
+    this->declare_parameter<double>("planner.goal_tolerance", 0.4);
     this->declare_parameter<int>("planner.obstacle_inflation_radius_cells", 1);
     this->declare_parameter<double>("planner.obstacle_inflation_radius_m", 0.0);
     this->declare_parameter<int>("planner.branching_factor", 0);
@@ -1853,9 +1854,55 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
         getCurrentRobotState();
         std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
         updateStartLaneletFromCurrentPoseLocked(true, "new navigation goal");
-        end_lanelet_name_ = goal->lanelet_name;
-        RCLCPP_INFO(this->get_logger(), "Action Server: Rebuilding global planner from lanelet_id=%d to lanelet '%s'",
-                    start_lanelet_id_, end_lanelet_name_.c_str());
+
+        // Resolve the goal lanelet to an *id* before rebuilding so the planner
+        // never hard-fails on a name mismatch (accents/whitespace/typo). Prefer
+        // an exact name match; otherwise fall back to the nearest lanelet to the
+        // goal pose. Passing an id (with the name cleared) means the rebuilt
+        // GlobalPlanner constructor cannot bail out in resolveLaneletName.
+        int resolved_end_id = 0;
+        bool resolved_by_name = false;
+        bool resolved_by_pose = false;
+        if (global_planner_)
+        {
+            if (global_planner_->resolveLaneletName(goal->lanelet_name, resolved_end_id))
+            {
+                resolved_by_name = true;
+            }
+            else
+            {
+                const double gx = goal->target_pose.pose.position.x;
+                const double gy = goal->target_pose.pose.position.y;
+                bool inside = false;
+                if ((gx != 0.0 || gy != 0.0) &&
+                    global_planner_->findLaneletAt(gx, gy, resolved_end_id, inside))
+                {
+                    resolved_by_pose = true;
+                    RCLCPP_WARN(this->get_logger(),
+                        "Action Server: goal lanelet name '%s' not found; falling back to "
+                        "nearest lanelet_id=%d to goal pose (%.2f, %.2f).",
+                        goal->lanelet_name.c_str(), resolved_end_id, gx, gy);
+                }
+            }
+        }
+
+        if (resolved_by_name || resolved_by_pose)
+        {
+            end_lanelet_id_ = resolved_end_id;
+            end_lanelet_name_.clear();  // use id path; constructor cannot hard-fail
+            RCLCPP_INFO(this->get_logger(),
+                "Action Server: Rebuilding global planner from lanelet_id=%d to lanelet_id=%d (%s).",
+                start_lanelet_id_, end_lanelet_id_,
+                resolved_by_name ? "name match" : "nearest-to-pose fallback");
+        }
+        else
+        {
+            // Last resort: keep the name and let the constructor try (and log) it.
+            end_lanelet_name_ = goal->lanelet_name;
+            RCLCPP_ERROR(this->get_logger(),
+                "Action Server: could not resolve goal lanelet '%s' by name or goal pose; "
+                "planner build may fail.", goal->lanelet_name.c_str());
+        }
         rebuildGlobalPlannerLocked();
     }
 
@@ -1866,15 +1913,30 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
     double target_x = goal->target_pose.pose.position.x;
     double target_y = goal->target_pose.pose.position.y;
 
+    // Capture the end of the global plan (the lanelet centerline end). Used both
+    // to substitute for a missing target_pose and as a secondary arrival
+    // condition: a saved goal pose may sit slightly outside the drivable corridor
+    // and never be reachable within tolerance, but reaching the centerline end
+    // means we have arrived at the lanelet.
+    double plan_end_x = 0.0, plan_end_y = 0.0;
+    bool have_plan_end = false;
+    {
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        if (!all_waypoints_from_global_planner_.empty()) {
+            const auto& last_wp = all_waypoints_from_global_planner_.back();
+            plan_end_x = last_wp.x;
+            plan_end_y = last_wp.y;
+            have_plan_end = true;
+        }
+    }
+
     // When the client sends only a lanelet_name and leaves target_pose at its
     // zero default, derive the target from the last global-plan waypoint so the
     // goal-reached check has a real position to work against.
     if (target_x == 0.0 && target_y == 0.0) {
-        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
-        if (!all_waypoints_from_global_planner_.empty()) {
-            const auto& last_wp = all_waypoints_from_global_planner_.back();
-            target_x = last_wp.x;
-            target_y = last_wp.y;
+        if (have_plan_end) {
+            target_x = plan_end_x;
+            target_y = plan_end_y;
             RCLCPP_INFO(this->get_logger(),
                 "Action Server: target_pose not set; using last plan waypoint (%.2f, %.2f)",
                 target_x, target_y);
@@ -1896,8 +1958,15 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
         last_y = car_state_->y;
     }
 
-    double tolerance = 0.3; // Default tolerance
-    this->get_parameter("planner.safe_clear", tolerance); // use safe_clear or fallback
+    // Dedicated arrival tolerance. Previously this reused planner.safe_clear
+    // (0.2 m, the obstacle-clearance margin), which is far too tight for a
+    // differential rover under NMPC tracking and caused goals to never declare
+    // success. goal_tolerance is a separate, sanely-defaulted parameter.
+    double tolerance = 0.4;
+    this->get_parameter("planner.goal_tolerance", tolerance);
+    if (tolerance <= 0.0) {
+        tolerance = 0.4;
+    }
 
     while (rclcpp::ok() && goal_handle->is_active()) {
         if (goal_handle->is_canceling()) {
@@ -1927,6 +1996,15 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
 
         double dist_remaining = std::hypot(rx - target_x, ry - target_y);
 
+        // Secondary arrival metric: distance to the end of the drivable plan.
+        // When the goal pose sits just outside the corridor, the rover stops at
+        // the centerline end; treat that as arrival too.
+        double dist_to_plan_end = std::numeric_limits<double>::infinity();
+        if (have_plan_end) {
+            dist_to_plan_end = std::hypot(rx - plan_end_x, ry - plan_end_y);
+        }
+        const double effective_remaining = std::min(dist_remaining, dist_to_plan_end);
+
         feedback->distance_remaining = dist_remaining;
         feedback->estimated_time_remaining = dist_remaining / 0.3; // estimated at 0.3m/s speed
         feedback->current_pose.header.frame_id = "map";
@@ -1938,13 +2016,13 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
 
         goal_handle->publish_feedback(feedback);
 
-        // Check if goal reached
-        if (dist_remaining <= tolerance) {
+        // Check if goal reached (either the goal pose or the end of the plan).
+        if (effective_remaining <= tolerance) {
             std::lock_guard<std::mutex> lk(action_server_mutex_);
             if (!goal_handle->is_active()) {
                 return;  // preempted by a newer goal between the distance check and here
             }
-            RCLCPP_INFO(this->get_logger(), "Action Server: Goal reached! Remaining distance is %.2fm", dist_remaining);
+            RCLCPP_INFO(this->get_logger(), "Action Server: Goal reached! Remaining distance is %.2fm", effective_remaining);
             result->success = true;
             result->message = "Goal reached successfully";
             result->total_distance = total_distance;
