@@ -1036,6 +1036,26 @@ bool GlobalPlanner::findLaneletAt(double x, double y, int &lanelet_id, bool &ins
     return false;
 }
 
+// Public name->id resolver over the loaded map. Mirrors the private overload
+// used in the constructor but works against the already-stored map_, so callers
+// (e.g. the action server) can resolve a goal name before rebuilding.
+bool GlobalPlanner::resolveLaneletName(const std::string &lanelet_name, int &lanelet_id) const
+{
+    if (!map_ || lanelet_name.empty())
+        return false;
+
+    for (const auto &ll : map_->laneletLayer)
+    {
+        if (ll.hasAttribute("name") &&
+            ll.attribute("name").value() == lanelet_name)
+        {
+            lanelet_id = static_cast<int>(ll.id());
+            return true;
+        }
+    }
+    return false;
+}
+
 // ===================================================================
 // Geometry-based filtering
 // ===================================================================

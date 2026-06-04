@@ -64,6 +64,20 @@ add_executable(path_planning_node
 
 add_executable(pointcloud_clustering_node src/pointcloud_clustering.cpp)
 
+# Standalone diagnostic: checks an .osm map for lanelet junction gaps that would
+# make the planner unable to route between lanelets.
+add_executable(junction_gap_check src/junction_gap_check.cpp)
+ament_target_dependencies(junction_gap_check
+  ament_index_cpp
+  grid_map_ros  # directory-scoped Eigen plugin define needs grid_map's headers
+  lanelet2_core
+  lanelet2_io
+  lanelet2_maps
+  lanelet2_projection
+  lanelet2_routing
+  lanelet2_traffic_rules
+)
+
 add_executable(pointcloud_roi_node src/pointcloud_roi.cpp)
 
 ament_target_dependencies(path_planning_node
@@ -165,6 +179,11 @@ install(TARGETS
 
 install(TARGETS
   pointcloud_roi_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS
+  junction_gap_check
   DESTINATION lib/${PROJECT_NAME}
 )
 

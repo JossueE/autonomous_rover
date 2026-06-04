@@ -169,6 +169,10 @@ public:
     nav_msgs::msg::OccupancyGrid  getOccupancyGrid();
     bool                          isOccupancyGridReady();
     bool                          findLaneletAt(double x, double y, int &lanelet_id, bool &inside) const;
+
+    // Resolve a lanelet 'name' tag to its id using the loaded map. Returns false
+    // when the map is not loaded or no lanelet carries that exact name.
+    bool                          resolveLaneletName(const std::string &lanelet_name, int &lanelet_id) const;
 };
 
 #endif // GLOBAL_PLANNER_HPP

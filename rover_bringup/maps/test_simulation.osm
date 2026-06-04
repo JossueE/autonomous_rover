@@ -1829,7 +1829,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="1321">
     <member type="way" role="left" ref="1317"/>
@@ -1857,7 +1857,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
     <tag k="turn_direction" v="right"/>
   </relation>
   <relation id="1372">
