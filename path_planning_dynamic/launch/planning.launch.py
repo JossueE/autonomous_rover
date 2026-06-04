@@ -57,10 +57,13 @@ def generate_launch_description():
         ),
         package_path,
     )
-    rviz_config = resolve_map_path(
-        'src/autonomous_rover/rover_bringup/rviz/nav.rviz',
-        package_path,
+    rviz_config = os.path.join(
+        get_package_share_directory('rover_bringup'), 'rviz', 'nav.rviz'
     )
+
+    # Make rviz config path dynamic via a launch argument (default is package-relative path)
+    rviz_config_default = rviz_config
+    rviz_config_arg = LaunchConfiguration('rviz_config')
 
 
     publisher_node_planner = launch_ros.actions.Node(
@@ -95,7 +98,7 @@ def generate_launch_description():
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', rviz_config],
+        arguments=['-d', rviz_config_arg],
         parameters=[{'use_sim_time': use_sim_time}]
     )
 
@@ -103,9 +106,16 @@ def generate_launch_description():
         'use_sim_time',
         default_value='False',
         description='Use simulation (Gazebo) clock if true')
+
+    rviz_arg = launch.actions.DeclareLaunchArgument(
+        'rviz_config',
+        default_value=rviz_config_default,
+        description='Path to rviz config file'
+    )
     
     return launch.LaunchDescription([
         simu_time,
+        rviz_arg,
         pointcloud_roi,
         pointcloud_clustering,
         publisher_node_planner,
