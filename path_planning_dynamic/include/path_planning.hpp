@@ -41,6 +41,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -163,13 +164,17 @@ private:
     int end_lanelet_id_;
     std::string start_lanelet_name_;
     std::string end_lanelet_name_;
+    std::mutex global_planner_mutex_;
 
     std::vector<point_struct> all_waypoints_from_global_planner_;  // waypoint with the central path and the neighbor lanelets
     visualization_msgs::msg::MarkerArray global_planner_markers_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr global_planner_publisher_;
     void publishGlobalPlanner();
+    void publishGlobalPlannerLocked();
     void publishGlobalPlannerOccupancyGrid();
     void rebuildGlobalPlanner();
+    void rebuildGlobalPlannerLocked();
+    bool updateStartLaneletFromCurrentPoseLocked(bool allow_nearest_fallback, const char *reason);
     rcl_interfaces::msg::SetParametersResult onPlannerParameters(
         const std::vector<rclcpp::Parameter> &params);
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_handler_;

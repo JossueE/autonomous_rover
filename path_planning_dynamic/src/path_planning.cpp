@@ -196,8 +196,9 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     sdv_trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>(
         "/sdv_trajectory", 10);
 
+    const auto global_planner_marker_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
     global_planner_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-        "/global_planner", 10);
+        "/global_planner", global_planner_marker_qos);
 
     global_planner_occupancy_grid_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
         global_planner_occupancy_output_topic_, 10);
@@ -282,6 +283,12 @@ path_planning::~path_planning()
 
 void path_planning::rebuildGlobalPlanner()
 {
+    std::lock_guard<std::mutex> lock(global_planner_mutex_);
+    rebuildGlobalPlannerLocked();
+}
+
+void path_planning::rebuildGlobalPlannerLocked()
+{
     global_planner_ = std::make_shared<GlobalPlanner>(
         x_offset_, y_offset_, map_path_, start_lanelet_id_, end_lanelet_id_,
         start_lanelet_name_, end_lanelet_name_, global_planner_resolution_,
@@ -289,13 +296,71 @@ void path_planning::rebuildGlobalPlanner()
         global_planner_outside_value_, global_planner_frame_id_);
 
     all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
-    publishGlobalPlanner();
+    publishGlobalPlannerLocked();
     if (global_planner_->isOccupancyGridReady())
     {
         global_planner_occupancy_grid_ = global_planner_->getOccupancyGrid();
         publishGlobalPlannerOccupancyGrid();
         global_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>(global_planner_occupancy_grid_);
     }
+}
+
+bool path_planning::updateStartLaneletFromCurrentPoseLocked(bool allow_nearest_fallback, const char *reason)
+{
+    if (!global_planner_)
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: global planner is not initialized.");
+        return false;
+    }
+
+    double x = 0.0;
+    double y = 0.0;
+    bool pose_valid = false;
+    {
+        std::lock_guard<std::mutex> state_lock(car_state_mutex_);
+        pose_valid = car_state_valid_;
+        if (pose_valid)
+        {
+            x = car_state_->x;
+            y = car_state_->y;
+        }
+    }
+
+    if (!pose_valid)
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: robot pose is not valid.");
+        return false;
+    }
+
+    int current_lanelet_id = 0;
+    bool inside_lanelet = false;
+    if (!global_planner_->findLaneletAt(x, y, current_lanelet_id, inside_lanelet))
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: no lanelet found near current pose (%.2f, %.2f).",
+            x, y);
+        return false;
+    }
+
+    if (!inside_lanelet && !allow_nearest_fallback)
+    {
+        RCLCPP_DEBUG(this->get_logger(),
+            "Current pose is near lanelet_id=%d but not inside; keeping start lanelet unchanged.",
+            current_lanelet_id);
+        return false;
+    }
+
+    if (current_lanelet_id == start_lanelet_id_ && start_lanelet_name_.empty())
+        return false;
+
+    start_lanelet_id_ = current_lanelet_id;
+    start_lanelet_name_.clear();
+    RCLCPP_INFO(this->get_logger(),
+        "Global planner start rebased to lanelet_id=%d from current pose (inside=%s, reason=%s).",
+        start_lanelet_id_, inside_lanelet ? "true" : "false", reason ? reason : "unknown");
+    return true;
 }
 
 rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
@@ -341,6 +406,7 @@ rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
     }
 
     if (should_rebuild) {
+        std::lock_guard<std::mutex> lock(global_planner_mutex_);
         start_lanelet_id_ = new_start_id;
         end_lanelet_id_ = new_end_id;
         start_lanelet_name_ = new_start_name;
@@ -349,7 +415,7 @@ rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
             "Rebuilding global planner: start_id=%d end_id=%d start_name='%s' end_name='%s'",
             start_lanelet_id_, end_lanelet_id_,
             start_lanelet_name_.c_str(), end_lanelet_name_.c_str());
-        rebuildGlobalPlanner();
+        rebuildGlobalPlannerLocked();
     }
 
     return result;
@@ -390,6 +456,12 @@ void path_planning::getCurrentRobotState()
 // publish the global planner
 // =============================
 void path_planning::publishGlobalPlanner()
+{
+    std::lock_guard<std::mutex> lock(global_planner_mutex_);
+    publishGlobalPlannerLocked();
+}
+
+void path_planning::publishGlobalPlannerLocked()
 {
     RCLCPP_DEBUG(this->get_logger(), "Publishing global planner with %zu waypoints",
                  all_waypoints_from_global_planner_.size());
@@ -522,9 +594,28 @@ void path_planning::obstacle_info_callback(const path_planning_dynamic::msg::Obs
             "Obstacle collection received with %zu obstacles", msg->obstacles.size());
     }
     getCurrentRobotState();
-    publishGlobalPlanner();
-    RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
-    map_combination(msg);
+
+    bool has_active_goal = false;
+    {
+        std::lock_guard<std::mutex> action_lock(action_server_mutex_);
+        has_active_goal = active_goal_handle_ && active_goal_handle_->is_active();
+    }
+
+    {
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        if (has_active_goal &&
+            updateStartLaneletFromCurrentPoseLocked(false, "active navigation lanelet rebase"))
+        {
+            rebuildGlobalPlannerLocked();
+        }
+        else
+        {
+            publishGlobalPlannerLocked();
+        }
+
+        RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
+        map_combination(msg);
+    }
 }
 
 cv::Mat path_planning::toMat(const nav_msgs::msg::OccupancyGrid &map)
@@ -1757,10 +1848,15 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
                 goal->location_name.c_str(), goal->lanelet_name.c_str());
 
     // 1. Rebuild global planner for target lanelet dynamically
-    if (!goal->lanelet_name.empty()) {
+    if (!goal->lanelet_name.empty())
+    {
+        getCurrentRobotState();
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        updateStartLaneletFromCurrentPoseLocked(true, "new navigation goal");
         end_lanelet_name_ = goal->lanelet_name;
-        RCLCPP_INFO(this->get_logger(), "Action Server: Rebuilding global planner to lanelet '%s'", end_lanelet_name_.c_str());
-        rebuildGlobalPlanner();
+        RCLCPP_INFO(this->get_logger(), "Action Server: Rebuilding global planner from lanelet_id=%d to lanelet '%s'",
+                    start_lanelet_id_, end_lanelet_name_.c_str());
+        rebuildGlobalPlannerLocked();
     }
 
     auto feedback = std::make_shared<NavigateToGoal::Feedback>();
@@ -1774,6 +1870,7 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
     // zero default, derive the target from the last global-plan waypoint so the
     // goal-reached check has a real position to work against.
     if (target_x == 0.0 && target_y == 0.0) {
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
         if (!all_waypoints_from_global_planner_.empty()) {
             const auto& last_wp = all_waypoints_from_global_planner_.back();
             target_x = last_wp.x;
