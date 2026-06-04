@@ -10,6 +10,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     mode = LaunchConfiguration('mode')
+    log_level = LaunchConfiguration('log_level')
     rtabmap_args = LaunchConfiguration('rtabmap_args')
 
     rtabmap_localization = PythonExpression([
@@ -23,11 +24,12 @@ def generate_launch_description():
         rtabmap_args,
     ]
 
+    # Kinect driver is inherently verbose (30 fps + IMU); send to log file only.
     k4a_node = Node(
         package='azure_kinect_ros2_driver',
         executable='azure_kinect_node',
         name='k4a_ros2_node',
-        output='screen',
+        output='log',
         emulate_tty=True,
         parameters=[{
             'point_cloud': True,
@@ -36,11 +38,12 @@ def generate_launch_description():
         }],
     )
 
+    # IMU filter runs at IMU rate; log file only.
     imu_filter_node = Node(
         package='imu_filter_madgwick',
         executable='imu_filter_madgwick_node',
         name='imu_filter_madgwick_node',
-        output='screen',
+        output='log',
         parameters=[{
             'use_mag': False,
             'world_frame': 'enu',
@@ -81,6 +84,7 @@ def generate_launch_description():
             'queue_size': '20',
             'qos': '2',
             'rviz': rtabmap_rviz,
+            'log_level': log_level,
         }.items(),
     )
 
@@ -90,6 +94,10 @@ def generate_launch_description():
             default_value='slam',
             choices=['localization', 'mapping', 'slam'],
             description='localization: use existing map, mapping: delete DB and map from zero, slam: continue/update existing map',
+        ),
+        DeclareLaunchArgument(
+            'log_level', default_value='warn',
+            description='Log level (debug|info|warn|error)',
         ),
         DeclareLaunchArgument(
             'rtabmap_args',
@@ -104,7 +112,7 @@ def generate_launch_description():
                 '--Grid/CellSize 0.05'
             ),
         ),
-        LogInfo(msg='Starting Azure Kinect + Madgwick IMU + RTAB-Map'),
+        LogInfo(msg='Starting Azure Kinect + Madgwick IMU filter + RTAB-Map'),
         k4a_node,
         imu_filter_node,
         rtabmap_launch,

@@ -55,10 +55,11 @@ def generate_launch_description():
     log_level = LaunchConfiguration('log_level')
 
     # 1 + 2 — hardware and localization come up immediately.
-    hardware = _include('rover_bringup', 'hardware_bringup.launch.py')
+    hardware = _include('rover_bringup', 'hardware_bringup.launch.py',
+                        {'log_level': log_level})
     localization = _include(
         'rover_bringup', 'k4a_rtabmap.launch.py',
-        {'mode': rtabmap_mode},
+        {'mode': rtabmap_mode, 'log_level': log_level},
     )
 
     # 3 — planner + RViz (config forced to the real nav.rviz). Delayed so
@@ -86,8 +87,8 @@ def generate_launch_description():
             choices=['localization', 'mapping', 'slam'],
             description='RTAB-Map mode: localization (existing map), mapping (fresh), slam (continue).'),
         DeclareLaunchArgument(
-            'log_level', default_value='info',
-            description='rover_bt log level (debug|info|warn|error).'),
+            'log_level', default_value='warn',
+            description='Log level for all nodes (debug|info|warn|error).'),
 
         LogInfo(msg='=== Rover full bring-up: hardware + localization + planner + NMPC + BT ==='),
         hardware,

@@ -32,11 +32,12 @@ class WakeWord:
         wake_word: str | None = None,
         variants: Iterable[str] | None = None,
         listen_seconds: float | None = None,
+        sample_rate: int | None = None,
     ) -> None:
         self.log = logging.getLogger("Wake_Word")
         self.wake_word = wake_word or ACTIVATION_PHRASE_WAKE_WORD
         self.listen_seconds = listen_seconds or LISTEN_SECONDS_STT
-        self.sample_rate = AUDIO_LISTENER_SAMPLE_RATE
+        self.sample_rate = sample_rate if sample_rate is not None else AUDIO_LISTENER_SAMPLE_RATE
         self.variants = list(variants) if variants else list(VARIANTS_WAKE_WORD)
         if self.wake_word not in self.variants:
             self.variants.insert(0, self.wake_word)
