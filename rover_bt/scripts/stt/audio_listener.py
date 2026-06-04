@@ -18,42 +18,76 @@ def define_device_id(
 ) -> Optional[int]:
     """Define the device id to use for audio input."""
     log = log or logging.getLogger("AudioListener")
-    if prefered is not None:
+    if prefered is not None and prefered != -1:
+        log.info("Usando dispositivo de audio preferido (ID: %d)", prefered)
         return prefered
 
     if pa is None:
         log.warning("Pyaudio instance no iniciado, no se puede listar dispositivos.")
         return None
 
+    devices = []
     fallback = None
     for i in range(pa.get_device_count()):
-        info = pa.get_device_info_by_index(i)
+        try:
+            info = pa.get_device_info_by_index(i)
+        except Exception:
+            continue
         if info.get("maxInputChannels", 0) <= 0:
             continue
         if fallback is None:
             fallback = i
+        name = info.get("name", "")
+        rate = int(info.get("defaultSampleRate", 0))
         log.info(
             "[%d] %s (in=%s, rate=%d)",
             i,
-            info["name"],
+            name,
             info["maxInputChannels"],
-            int(info.get("defaultSampleRate", 0)),
+            rate,
         )
-        if info["name"].lower() == "pulse":
-            log.info("Usando dispositivo PulseAudio por defecto: %d", i)
+        devices.append((i, name.lower(), rate))
+
+    # Preference 1: Look for "pulse", "pipewire" or "default" (sound server routing)
+    for i, name, rate in devices:
+        if "pulse" in name or "pipewire" in name or name == "default":
+            log.info("Usando dispositivo de servidor de sonido por defecto: %d (%s)", i, name)
             return i
 
+    # Preference 2: Look for any device named "sysdefault"
+    for i, name, rate in devices:
+        if "sysdefault" in name:
+            log.info("Usando dispositivo sysdefault: %d (%s)", i, name)
+            return i
+
+    # Preference 3: Look for any device with native 16000Hz support (since that's our target)
+    for i, name, rate in devices:
+        if rate == 16000:
+            log.info("Usando dispositivo con frecuencia de muestreo nativa de 16kHz: %d (%s)", i, name)
+            return i
+
+    if fallback is not None:
+        log.info("Cae en el fallback del primer dispositivo de entrada disponible: %d", fallback)
     return fallback
 
 
 class AudioListener:
-    def __init__(self):
+    def __init__(
+        self,
+        device_index: Optional[int] = None,
+        sample_rate: Optional[int] = None,
+        channels: Optional[int] = None,
+        frames_per_buffer: Optional[int] = None,
+    ):
         self.log = logging.getLogger("AudioListener")
-        self.sample_rate = AUDIO_LISTENER_SAMPLE_RATE
+        self.sample_rate = sample_rate if sample_rate is not None else AUDIO_LISTENER_SAMPLE_RATE
         self.audio_interface = pyaudio.PyAudio()
-        self.device_index = define_device_id(self.audio_interface, AUDIO_LISTENER_DEVICE_ID, self.log)
-        self.channels = AUDIO_LISTENER_CHANNELS
-        self.frames_per_buffer = AUDIO_LISTENER_FRAMES_PER_BUFFER
+        
+        pref_device = device_index if device_index is not None else AUDIO_LISTENER_DEVICE_ID
+        self.device_index = define_device_id(self.audio_interface, pref_device, self.log)
+        
+        self.channels = channels if channels is not None else AUDIO_LISTENER_CHANNELS
+        self.frames_per_buffer = frames_per_buffer if frames_per_buffer is not None else AUDIO_LISTENER_FRAMES_PER_BUFFER
         self.stream = None
         self.log.info(
             "AudioListener initialized with device_index=%s, sample_rate=%s, "
@@ -67,14 +101,35 @@ class AudioListener:
     def start_stream(self):
         """Start the audio stream if not already started."""
         if self.stream is None:
-            self.stream = self.audio_interface.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                input_device_index=self.device_index,
-                frames_per_buffer=self.frames_per_buffer,
-            )
+            try:
+                self.stream = self.audio_interface.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    input=True,
+                    input_device_index=self.device_index,
+                    frames_per_buffer=self.frames_per_buffer,
+                )
+            except Exception as e:
+                self.log.error(
+                    f"Failed to open audio stream on device {self.device_index} at {self.sample_rate} Hz: {e}"
+                )
+                if self.device_index != -1 and self.device_index is not None:
+                    self.log.info("Trying to fall back to default sound server routing...")
+                    fallback_device = define_device_id(self.audio_interface, prefered=-1, log=self.log)
+                    if fallback_device is not None and fallback_device != self.device_index:
+                        self.device_index = fallback_device
+                        self.log.info(f"Retrying audio stream on device {self.device_index}")
+                        self.stream = self.audio_interface.open(
+                            format=pyaudio.paInt16,
+                            channels=self.channels,
+                            rate=self.sample_rate,
+                            input=True,
+                            input_device_index=self.device_index,
+                            frames_per_buffer=self.frames_per_buffer,
+                        )
+                        return
+                raise e
 
     def read_frame(self, frame_samples: int) -> bytes:
         """Read a frame of audio data from the stream."""
@@ -85,8 +140,14 @@ class AudioListener:
     def stop_stream(self):
         """Stop the audio stream if it is running."""
         if self.stream is not None:
-            self.stream.stop_stream()
-            self.stream.close()
+            try:
+                self.stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self.stream.close()
+            except Exception:
+                pass
             self.stream = None
 
     def delete(self):
