@@ -57,8 +57,11 @@ class TwistPriorityMux(Node):
 
     def _on(self, topic, msg):
         e = self._inputs[topic]
+        # Compute the timestamp first (may release the GIL inside the C extension).
+        # Storing t before msg means _tick never sees a fresh msg with a stale t=-1e9.
+        t = self.get_clock().now().nanoseconds * 1e-9
+        e["t"] = t
         e["msg"] = msg
-        e["t"] = self.get_clock().now().nanoseconds * 1e-9
 
     def _tick(self):
         now = self.get_clock().now().nanoseconds * 1e-9

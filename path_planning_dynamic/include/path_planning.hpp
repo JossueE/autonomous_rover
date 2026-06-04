@@ -138,7 +138,8 @@ private:
     // Grid Map
     std::shared_ptr<Grid_map> grid_map_;
 
-    // State
+    // State (car_state_mutex_ guards all reads/writes to car_state_ fields)
+    mutable std::mutex car_state_mutex_;
     std::shared_ptr<State> car_state_;
     bool car_state_valid_ = false;
     std::string pose_frame_;
