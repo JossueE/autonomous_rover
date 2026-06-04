@@ -1,18 +1,14 @@
-<<<<<<< HEAD
-#!/bin/bash
+#!/usr/bin/env bash
 # Download voice model assets and install Python runtime deps for rover_bt.
 # Run once after cloning the repo, before building with colcon.
 #
 # Usage: bash src/rover_bt/scripts/install_voice_assets.sh
 #
 # Assets downloaded/created inside src/rover_bt/voice_assets/:
-#   whisper_cache/  — faster-whisper model cache (base, auto-downloaded)
-#   piper/          — Piper TTS binary + shared libs
-#   *.onnx          — Piper TTS voice model (es_MX-claude-high)
+#   stt/       — Whisper model files
+#   wake_word/ — wake word model
+#   tts/       — Piper TTS voice model
 
-=======
-#!/usr/bin/env bash
->>>>>>> 95262d0 (new voice)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -42,21 +38,6 @@ fetch() {
 }
 
 install_python_deps() {
-<<<<<<< HEAD
-    # sounddevice loads PortAudio (libportaudio.so.2) at import; pip does not
-    # bundle the native lib on Linux/Jetson, so install it via apt first.
-    if ! ldconfig -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
-        echo "  Installing PortAudio system library (libportaudio2) ..."
-        sudo apt-get update && sudo apt-get install -y libportaudio2
-    fi
-
-    echo "  Installing Python packages (faster-whisper, webrtcvad, sounddevice) ..."
-    # --break-system-packages only exists in pip >= 23.0.1 and is only needed on
-    # PEP 668 "externally-managed" distros. Older pip (e.g. JetPack) rejects the flag.
-    local break_flag=""
-    if pip3 install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
-        break_flag="--break-system-packages"
-=======
   echo "[deps] Instalando dependencias Python..."
   local break_flag=""
   if python3 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
@@ -90,7 +71,6 @@ download_file_or_zip() {
     if [[ -d "$out_dir/$dname" ]]; then
       echo "  - ya existe: $out_dir/$dname"
       return 0
->>>>>>> 95262d0 (new voice)
     fi
     tmp="$out_dir/${name_hint:-pkg}.zip"
     echo "  - bajando ZIP: $url"
@@ -123,23 +103,6 @@ download_file_or_zip() {
   fi
 }
 
-<<<<<<< HEAD
-# ── Pre-warm Whisper model cache ──────────────────────────────────────────────
-prewarm_whisper_models() {
-    local cache_dir="$ASSETS/whisper_cache"
-    mkdir -p "$cache_dir"
-    echo "  Pre-downloading Whisper base model to $cache_dir ..."
-    python3 - <<PYEOF
-from faster_whisper import WhisperModel
-import os
-cache = "$cache_dir"
-for name in ("base",):
-    print(f"  Fetching {name} ...")
-    WhisperModel(name, device="cpu", compute_type="int8", download_root=cache)
-    print(f"  {name} cached.")
-PYEOF
-    echo "  Whisper models ready."
-=======
 download_section() {
   local section="$1"
   local label="$2"
@@ -158,7 +121,6 @@ download_section() {
     [[ -n "$url" && "$url" != "null" ]] || continue
     download_file_or_zip "$url" "$CACHE_DIR/$section" "$name"
   done
->>>>>>> 95262d0 (new voice)
 }
 
 [[ -f "$MODELS_FILE" ]] || die "No se encontro $MODELS_FILE."
@@ -173,18 +135,4 @@ download_section "stt" "STT"
 download_section "wake_word" "VOSK"
 download_section "tts" "TTS"
 
-<<<<<<< HEAD
-echo "[2/4] Whisper model cache (base)"
-prewarm_whisper_models
-
-echo "[3/4] Piper TTS binary"
-download_piper
-
-echo "[4/4] Piper voice model (es_MX-claude-high)"
-download_voice_model
-
-echo ""
-echo "=== Done. Build with: colcon build --packages-select rover_bt ==="
-=======
 echo "OK. Modelos listos en: $CACHE_DIR"
->>>>>>> 95262d0 (new voice)
