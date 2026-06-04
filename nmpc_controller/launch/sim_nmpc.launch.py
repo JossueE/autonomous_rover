@@ -43,7 +43,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "cmd_vel_topic",
-                default_value="/cmd_vel_safe",
+                default_value="/cmd_vel_nav",
                 description="Velocity command output topic",
             ),
             DeclareLaunchArgument(

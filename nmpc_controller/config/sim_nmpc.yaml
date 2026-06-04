@@ -14,7 +14,7 @@ nmpc_controller_node:
     max_obstacles: 20
     map_frame: "map"
     base_frame: "base_footprint"
-    cmd_vel_topic: "/cmd_vel_safe"
+    cmd_vel_topic: "/cmd_vel_nav"
     costmap_topic: "/occupancy_grid_obstacles"
     path_topic: "/sdv_trajectory"
     goal_tolerance: 0.1

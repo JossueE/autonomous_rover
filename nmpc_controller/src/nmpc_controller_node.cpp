@@ -74,7 +74,7 @@ public:
     // ROS frame and topic configuration.
     this->declare_parameter<std::string>("map_frame", "map");         // Global planning / control frame.
     this->declare_parameter<std::string>("base_frame", "base_footprint");  // Robot body frame.
-    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel_safe"); // Velocity command output topic.
+    this->declare_parameter<std::string>("cmd_vel_topic", "cmd_vel_nav"); // Velocity command output topic.
     this->declare_parameter<std::string>("costmap_topic",
                                          "/move_base/local_costmap/costmap"); // Occupancy grid input topic.
     this->declare_parameter<std::string>("path_topic", "/drawn_plan");        // Path reference input topic.
