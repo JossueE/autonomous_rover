@@ -262,11 +262,17 @@ class VoiceCommandNode(Node):
         )
         self.declare_parameter("command_topic", "/rover_bt/commands")
         self.declare_parameter("tts_topic", "/rover_bt/tts/say")
+        self.declare_parameter("audio_device_index", -1)
+        self.declare_parameter("audio_sample_rate", 16000)
+        self.declare_parameter("audio_channels", 1)
 
         self.wake_word = self.get_parameter("wake_word").value.lower()
         self.wake_variants = list(self.get_parameter("wake_variants").value)
         self.wake_timeout = float(self.get_parameter("wake_timeout_sec").value)
         self.stt_model_name = self.get_parameter("stt_model_name").value
+        audio_device_index = self.get_parameter("audio_device_index").value
+        audio_sample_rate = self.get_parameter("audio_sample_rate").value
+        audio_channels = self.get_parameter("audio_channels").value
 
         self._stop_event = threading.Event()
         self._speaking = threading.Event()
@@ -281,12 +287,17 @@ class VoiceCommandNode(Node):
         if len(tts_models) < 2:
             raise RuntimeError("La seccion 'tts' de models.yml debe incluir modelo .onnx y .json")
 
-        self.audio_listener = AudioListener()
+        self.audio_listener = AudioListener(
+            device_index=audio_device_index,
+            sample_rate=audio_sample_rate,
+            channels=audio_channels,
+        )
         self.wake_detector = WakeWord(
             str(wake_model),
             wake_word=self.wake_word,
             variants=self.wake_variants,
             listen_seconds=self.wake_timeout,
+            sample_rate=audio_sample_rate,
         )
         self.stt = SpeechToText(str(stt_model), model_name=self.stt_model_name)
         self.tts = TTS(str(tts_models[0]), str(tts_models[1]))
