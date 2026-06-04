@@ -79,3 +79,8 @@ voice_command_node:
     command_topic: "/rover_bt/commands"
     tts_topic: "/rover_bt/tts/say"
     # waypoints_file: ""                 # defaults to config/waypoints.yaml in package
+
+    # ── Audio Interface ──
+    audio_device_index: -1               # -1 to search and fallback dynamically (pipewire, pulse, default)
+    audio_sample_rate: 16000             # target capture rate for Vosk/Whisper
+    audio_channels: 1                    # number of capture channels (typically 1 for mono STT)
