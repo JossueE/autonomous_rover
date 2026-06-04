@@ -2,6 +2,7 @@
 
 #include <lanelet2_io/Io.h>
 #include <rclcpp/clock.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,27 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
         std::cerr << red << "[GlobalPlanner] resolution must be > 0, got " << resolution_
                   << " - aborting initialization." << reset << std::endl;
         return;
+    }
+
+    // Resolve package:// URIs: "package://pkg/relative/path" → install share path
+    if (map_path_.rfind("package://", 0) == 0)
+    {
+        std::string rest = map_path_.substr(10);
+        auto slash = rest.find('/');
+        if (slash != std::string::npos)
+        {
+            std::string pkg = rest.substr(0, slash);
+            std::string rel = rest.substr(slash + 1);
+            try
+            {
+                map_path_ = ament_index_cpp::get_package_share_directory(pkg) + "/" + rel;
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << red << "[GlobalPlanner] Error resolving package share directory for " 
+                          << pkg << ": " << e.what() << reset << std::endl;
+            }
+        }
     }
 
     // C1: protect against map-load exceptions (file missing, malformed, etc.).
