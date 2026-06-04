@@ -139,7 +139,12 @@
             <Speak message="Operación reanudada."/>
             <ClearCommand/>
           </Sequence>
-          <ClearCommand name="DiscardInEmergency"/>
+          <!-- Keep the safety channel alive: publish ZeroTwist every tick so
+               the twist_priority_mux never falls through to cmd_vel_nav. -->
+          <Sequence name="HoldEmergency">
+            <ClearCommand name="DiscardInEmergency"/>
+            <ZeroTwist/>
+          </Sequence>
         </Fallback>
 
         <!-- === TELEOP VOICE MODE === -->
