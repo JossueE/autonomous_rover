@@ -1436,6 +1436,8 @@ void path_planning::buildWaypointDistanceFields()
 
     drawByPriority(1, bin1, has_wp1_);
     drawByPriority(2, bin2, has_wp2_);
+    drawByPriority(3, bin2, has_wp2_);
+    drawByPriority(4, bin2, has_wp2_);
 
     // If there is no prio-1 in chunk, keep bin1 empty; same for prio-2.
     auto toMetersDist = [&](const cv::Mat& bin, cv::Mat& out_m) {
