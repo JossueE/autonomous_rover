@@ -364,20 +364,24 @@ void path_planning::getCurrentRobotState()
     try
     {
         pose_tf = tf2_buffer.lookupTransform("map", pose_frame_, tf2::TimePointZero).transform;
-        car_state_->x = pose_tf.translation.x;
-        car_state_->y = pose_tf.translation.y;
-        car_state_->z = pose_tf.translation.z + z_offset_;
         tf2::Quaternion quat;
         tf2::fromMsg(pose_tf.rotation, quat);
         double roll, pitch, yaw;
         tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-        car_state_->heading = yaw;
-        car_state_valid_ = true;
+        {
+            std::lock_guard<std::mutex> lk(car_state_mutex_);
+            car_state_->x = pose_tf.translation.x;
+            car_state_->y = pose_tf.translation.y;
+            car_state_->z = pose_tf.translation.z + z_offset_;
+            car_state_->heading = yaw;
+            car_state_valid_ = true;
+        }
     }
     catch (tf2::TransformException &ex)
     {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
             "Transform error (map <- %s): %s", pose_frame_.c_str(), ex.what());
+        std::lock_guard<std::mutex> lk(car_state_mutex_);
         car_state_valid_ = false;
     }
 }
@@ -1737,9 +1741,10 @@ void path_planning::handle_accepted(const std::shared_ptr<GoalHandleNavigateToGo
     }
     active_goal_handle_ = goal_handle;
 
-    // Start background thread for execution
-    std::thread([this, goal_handle]() {
-        this->execute_navigation(goal_handle);
+    // Capture shared ownership so the node cannot be destroyed under the thread.
+    auto self = std::static_pointer_cast<path_planning>(shared_from_this());
+    std::thread([self, goal_handle]() {
+        self->execute_navigation(goal_handle);
     }).detach();
 }
 
@@ -1762,27 +1767,59 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
     rclcpp::Rate rate(5.0); // 5Hz tracking rate
     double target_x = goal->target_pose.pose.position.x;
     double target_y = goal->target_pose.pose.position.y;
+
+    // When the client sends only a lanelet_name and leaves target_pose at its
+    // zero default, derive the target from the last global-plan waypoint so the
+    // goal-reached check has a real position to work against.
+    if (target_x == 0.0 && target_y == 0.0) {
+        if (!all_waypoints_from_global_planner_.empty()) {
+            const auto& last_wp = all_waypoints_from_global_planner_.back();
+            target_x = last_wp.x;
+            target_y = last_wp.y;
+            RCLCPP_INFO(this->get_logger(),
+                "Action Server: target_pose not set; using last plan waypoint (%.2f, %.2f)",
+                target_x, target_y);
+        } else {
+            auto res = std::make_shared<NavigateToGoal::Result>();
+            res->success = false;
+            res->message = "No target_pose and no global plan waypoints available";
+            goal_handle->abort(res);
+            RCLCPP_ERROR(this->get_logger(), "Action Server: %s", res->message.c_str());
+            return;
+        }
+    }
     double total_distance = 0.0;
     double start_time = this->now().seconds();
-    double last_x = car_state_->x;
-    double last_y = car_state_->y;
+    double last_x, last_y;
+    {
+        std::lock_guard<std::mutex> lk(car_state_mutex_);
+        last_x = car_state_->x;
+        last_y = car_state_->y;
+    }
 
     double tolerance = 0.3; // Default tolerance
     this->get_parameter("planner.safe_clear", tolerance); // use safe_clear or fallback
 
     while (rclcpp::ok() && goal_handle->is_active()) {
         if (goal_handle->is_canceling()) {
-            result->success = false;
-            result->message = "Goal canceled by client";
-            result->total_distance = total_distance;
-            result->total_time = this->now().seconds() - start_time;
-            goal_handle->canceled(result);
-            RCLCPP_INFO(this->get_logger(), "Action Server: Goal cancelled");
+            std::lock_guard<std::mutex> lk(action_server_mutex_);
+            if (goal_handle->is_active() || goal_handle->is_canceling()) {
+                result->success = false;
+                result->message = "Goal canceled by client";
+                result->total_distance = total_distance;
+                result->total_time = this->now().seconds() - start_time;
+                goal_handle->canceled(result);
+                RCLCPP_INFO(this->get_logger(), "Action Server: Goal cancelled");
+            }
             return;
         }
 
-        double rx = car_state_->x;
-        double ry = car_state_->y;
+        double rx, ry;
+        {
+            std::lock_guard<std::mutex> lk(car_state_mutex_);
+            rx = car_state_->x;
+            ry = car_state_->y;
+        }
 
         double d_step = std::hypot(rx - last_x, ry - last_y);
         total_distance += d_step;
@@ -1804,6 +1841,10 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
 
         // Check if goal reached
         if (dist_remaining <= tolerance) {
+            std::lock_guard<std::mutex> lk(action_server_mutex_);
+            if (!goal_handle->is_active()) {
+                return;  // preempted by a newer goal between the distance check and here
+            }
             RCLCPP_INFO(this->get_logger(), "Action Server: Goal reached! Remaining distance is %.2fm", dist_remaining);
             result->success = true;
             result->message = "Goal reached successfully";
