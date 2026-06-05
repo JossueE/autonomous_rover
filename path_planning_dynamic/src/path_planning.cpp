@@ -39,6 +39,9 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<double>("planner.forward_distance", forward_distance);
     this->declare_parameter<int>("planner.chunk_radius_cells", chunk_radius);
     this->declare_parameter<double>("planner.scale_factor", scale_factor);
+    this->declare_parameter<double>("planner.priority_switch.block_radius_m", priority_switch_block_radius_m_);
+    this->declare_parameter<int>("planner.priority_switch.enable_cycles", priority_switch_enable_cycles_);
+    this->declare_parameter<int>("planner.priority_switch.clear_cycles", priority_switch_clear_cycles_);
     this->declare_parameter<double>("ackermann.wheelbase", 0.0);
     this->declare_parameter<double>("ackermann.max_steering_angle", 0.0);
     this->declare_parameter<double>("differential.linear_step", 0.0);
@@ -100,6 +103,9 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("planner.forward_distance", forward_distance);
     this->get_parameter("planner.chunk_radius_cells", chunk_radius);
     this->get_parameter("planner.scale_factor", scale_factor);
+    this->get_parameter("planner.priority_switch.block_radius_m", priority_switch_block_radius_m_);
+    this->get_parameter("planner.priority_switch.enable_cycles", priority_switch_enable_cycles_);
+    this->get_parameter("planner.priority_switch.clear_cycles", priority_switch_clear_cycles_);
     this->get_parameter("ackermann.wheelbase", configured_ackermann_wheelbase);
     this->get_parameter("ackermann.max_steering_angle", configured_ackermann_max_steering_angle);
     this->get_parameter("differential.linear_step", differential_linear_step_);
@@ -156,6 +162,14 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
             scale_factor);
         scale_factor = 1.0;
     }
+    if (priority_switch_block_radius_m_ <= 0.0) {
+        RCLCPP_WARN(this->get_logger(),
+            "planner.priority_switch.block_radius_m must be > 0 (got %f); falling back to 0.20.",
+            priority_switch_block_radius_m_);
+        priority_switch_block_radius_m_ = 0.20;
+    }
+    priority_switch_enable_cycles_ = std::max(1, priority_switch_enable_cycles_);
+    priority_switch_clear_cycles_ = std::max(1, priority_switch_clear_cycles_);
     branching_factor = selectConfiguredInt(configured_branching_factor, legacy_branching_factor);
     ackermann_wheelbase_ = selectConfiguredDouble(configured_ackermann_wheelbase, legacy_wheelbase);
     ackermann_max_steering_angle_ =
@@ -308,13 +322,34 @@ void path_planning::rebuildGlobalPlannerLocked()
         global_planner_has_goal_pose_,
         global_planner_goal_x_, global_planner_goal_y_);
 
-    all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
+    global_planner_waypoints_all_ = global_planner_->getAllAllWaypointsStruct();
+    priority_blocked_cycles_ = 0;
+    priority_clear_cycles_ = 0;
+    updateActiveGlobalPlannerWaypointsLocked(false);
     publishGlobalPlannerLocked();
     if (global_planner_->isOccupancyGridReady())
     {
         global_planner_occupancy_grid_ = global_planner_->getOccupancyGrid();
         publishGlobalPlannerOccupancyGrid();
         global_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>(global_planner_occupancy_grid_);
+    }
+}
+
+void path_planning::updateActiveGlobalPlannerWaypointsLocked(bool include_alternatives)
+{
+    global_planner_alternatives_enabled_ = include_alternatives;
+    all_waypoints_from_global_planner_.clear();
+
+    if (include_alternatives) {
+        all_waypoints_from_global_planner_ = global_planner_waypoints_all_;
+        return;
+    }
+
+    all_waypoints_from_global_planner_.reserve(global_planner_waypoints_all_.size());
+    for (const auto &waypoint : global_planner_waypoints_all_) {
+        if (waypoint.priority == 1) {
+            all_waypoints_from_global_planner_.push_back(waypoint);
+        }
     }
 }
 
@@ -481,11 +516,16 @@ void path_planning::publishGlobalPlannerLocked()
                  all_waypoints_from_global_planner_.size());
     global_planner_markers_.markers.clear();
 
-    // Clear previous text markers
-    visualization_msgs::msg::Marker clear_text;
-    clear_text.header.frame_id = "map";
-    clear_text.header.stamp = this->now();
-    clear_text.action = visualization_msgs::msg::Marker::DELETEALL;
+    // Clear previous route and text markers so priority-mode switches do not
+    // leave stale alternatives visible in RViz.
+    visualization_msgs::msg::Marker clear_route;
+    clear_route.header.frame_id = "map";
+    clear_route.header.stamp = this->now();
+    clear_route.action = visualization_msgs::msg::Marker::DELETEALL;
+    clear_route.ns = "global_planner";
+    global_planner_markers_.markers.push_back(clear_route);
+
+    visualization_msgs::msg::Marker clear_text = clear_route;
     clear_text.ns = "global_planner_text";
     global_planner_markers_.markers.push_back(clear_text);
 
@@ -848,6 +888,111 @@ void path_planning::buildWindowMask(cv::Mat &window_mask,
     cv::fillConvexPoly(window_mask, window_polygon, cv::Scalar(255));
 }
 
+bool path_planning::isMainPriorityBlockedInGrid(
+    const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid,
+    bool &blocked) const
+{
+    blocked = false;
+    if (global_planner_waypoints_all_.empty() ||
+        dynamic_obstacle_grid.info.resolution <= 0.0 ||
+        dynamic_obstacle_grid.info.width == 0 ||
+        dynamic_obstacle_grid.info.height == 0 ||
+        dynamic_obstacle_grid.data.size() !=
+            static_cast<size_t>(dynamic_obstacle_grid.info.width) *
+                static_cast<size_t>(dynamic_obstacle_grid.info.height)) {
+        return false;
+    }
+
+    const int width = static_cast<int>(dynamic_obstacle_grid.info.width);
+    const int height = static_cast<int>(dynamic_obstacle_grid.info.height);
+    const double resolution = dynamic_obstacle_grid.info.resolution;
+    const int radius_cells = std::max(
+        1, static_cast<int>(std::round(priority_switch_block_radius_m_ / resolution)));
+    const int line_thickness = std::max(1, radius_cells * 2 + 1);
+
+    cv::Mat main_path_mask(height, width, CV_8UC1, cv::Scalar(0));
+    std::vector<cv::Point> main_points;
+    main_points.reserve(global_planner_waypoints_all_.size());
+
+    for (const auto &waypoint : global_planner_waypoints_all_) {
+        if (waypoint.priority != 1) {
+            continue;
+        }
+        int gx = 0;
+        int gy = 0;
+        worldToGrid(waypoint.x, waypoint.y, dynamic_obstacle_grid.info, gx, gy);
+        if (isInsideGrid(gx, gy, dynamic_obstacle_grid.info)) {
+            main_points.emplace_back(gx, gy);
+        }
+    }
+
+    if (main_points.empty()) {
+        return false;
+    }
+
+    for (size_t i = 1; i < main_points.size(); ++i) {
+        cv::line(main_path_mask, main_points[i - 1], main_points[i],
+                 cv::Scalar(255), line_thickness, cv::LINE_8);
+    }
+    for (const auto &point : main_points) {
+        cv::circle(main_path_mask, point, radius_cells, cv::Scalar(255), cv::FILLED);
+    }
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *mask_row = main_path_mask.ptr<uint8_t>(y);
+        for (int x = 0; x < width; ++x) {
+            if (mask_row[x] == 0) {
+                continue;
+            }
+            const size_t index = static_cast<size_t>(y) *
+                                     static_cast<size_t>(dynamic_obstacle_grid.info.width) +
+                                 static_cast<size_t>(x);
+            if (dynamic_obstacle_grid.data[index] >= 100) {
+                blocked = true;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
+void path_planning::updatePrioritySwitchLocked(
+    const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid)
+{
+    bool main_priority_blocked = false;
+    if (!isMainPriorityBlockedInGrid(dynamic_obstacle_grid, main_priority_blocked)) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "Priority switch could not evaluate priority 1 in the local chunk; keeping current mode (%s).",
+            global_planner_alternatives_enabled_ ? "alternatives" : "priority_1_only");
+        return;
+    }
+
+    if (main_priority_blocked) {
+        ++priority_blocked_cycles_;
+        priority_clear_cycles_ = 0;
+        if (!global_planner_alternatives_enabled_ &&
+            priority_blocked_cycles_ >= priority_switch_enable_cycles_) {
+            updateActiveGlobalPlannerWaypointsLocked(true);
+            RCLCPP_WARN(this->get_logger(),
+                "Priority 1 blocked for %d cycle(s); enabling global planner alternatives (priorities 2/3/4).",
+                priority_blocked_cycles_);
+            publishGlobalPlannerLocked();
+        }
+        return;
+    }
+
+    ++priority_clear_cycles_;
+    priority_blocked_cycles_ = 0;
+    if (global_planner_alternatives_enabled_ &&
+        priority_clear_cycles_ >= priority_switch_clear_cycles_) {
+        updateActiveGlobalPlannerWaypointsLocked(false);
+        RCLCPP_INFO(this->get_logger(),
+            "Priority 1 clear for %d cycle(s); returning to priority 1 only.",
+            priority_clear_cycles_);
+        publishGlobalPlannerLocked();
+    }
+}
+
 // ---------- map_combination ----------
 void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCollection::SharedPtr msg)
 {
@@ -1084,6 +1229,8 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
 
         fill_obstacle_interior(polygon_vertices, value_to_mark);
     }
+
+    updatePrioritySwitchLocked(dynamic_obstacle_grid);
 
     // Crop the published dynamic obstacle grid to the window bounding rectangle.
     nav_msgs::msg::OccupancyGrid published_dynamic_obstacle_grid = dynamic_obstacle_grid;
