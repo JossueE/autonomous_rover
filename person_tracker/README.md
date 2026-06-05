@@ -115,17 +115,21 @@ Setup mínimo: **ruedas + Kinect conectadas por USB**. Nada más se necesita (la
 Hay un launcher que orquesta los 3 componentes (driver de ruedas + Kinect/detector + ventana de visualización) en una sola terminal:
 
 ```bash
-ros2 launch person_tracker bringup.launch.py                        # outdoor (default)
-ros2 launch person_tracker bringup.launch.py mode:=indoor           # interiores
-ros2 launch person_tracker bringup.launch.py motors_port:=/dev/WHEELS mode:=indoor
-ros2 launch person_tracker bringup.launch.py mode:=indoor use_image_view:=false
+ros2 launch person_tracker bringup.launch.py robot:=zlac706                         # outdoor (default)
+ros2 launch person_tracker bringup.launch.py robot:=zlac706 mode:=indoor            # interiores
+ros2 launch person_tracker bringup.launch.py robot:=zlac706 motor_left_port:=/dev/ttyUSB0 motor_right_port:=/dev/ttyUSB1 mode:=indoor
+ros2 launch person_tracker bringup.launch.py robot:=zlac8015d motors_port:=/dev/WHEELS mode:=indoor
+ros2 launch person_tracker bringup.launch.py robot:=zlac706 mode:=indoor use_image_view:=false
 ```
 
 Argumentos disponibles:
 
 | Argumento | Default | Descripción |
 |---|---|---|
+| `robot` | `zlac706` | Perfil de robot: `zlac706` o `zlac8015d` |
 | `mode` | `outdoor` | `outdoor` o `indoor` (selecciona el YAML de parámetros del detector) |
+| `motor_left_port` | `/dev/ttyUSB0` | Puerto serial del driver izquierdo ZLAC706 |
+| `motor_right_port` | `/dev/ttyUSB1` | Puerto serial del driver derecho ZLAC706 |
 | `motors_port` | `/dev/ttyUSB0` | Puerto serial del driver ZLAC8015D (alternativas comunes: `/dev/WHEELS`) |
 | `use_image_view` | `true` | Si lanza la ventana con las detecciones anotadas |
 
@@ -150,17 +154,23 @@ export QT_QPA_PLATFORM=xcb   # solo si estás en Wayland (necesario para image_v
 ### Terminal 1 — Driver de las ruedas (vía `hardware_bringup`)
 
 ```bash
-ros2 launch rover_bringup hardware_bringup.launch.py motors_port:=/dev/WHEELS
+ros2 launch rover_bringup hardware_bringup.launch.py robot:=zlac706 motor_left_port:=/dev/ttyUSB0 motor_right_port:=/dev/ttyUSB1
 ```
 
-Si no tienes el symlink `/dev/WHEELS` (motores directo a otra laptop), usa el puerto crudo:
+Para el robot con ZLAC8015D:
+
+```bash
+ros2 launch rover_bringup hardware_bringup.launch.py robot:=zlac8015d motors_port:=/dev/WHEELS
+```
+
+Si no tienes symlink de motores, usa el puerto crudo:
 
 ```bash
 ls /dev/ttyUSB*                            # ver qué puertos hay
-ros2 launch rover_bringup hardware_bringup.launch.py motors_port:=/dev/ttyUSB0
+ros2 launch rover_bringup hardware_bringup.launch.py robot:=zlac8015d motors_port:=/dev/ttyUSB0
 ```
 
-> **Por qué usar el launch y no `ros2 run` directo:** el launch ya configura `unlock_driver:=true`, `accel_time_ms`, `decel_time_ms` y `wheels_separation:0.35` (crítico — sin este valor correcto, los giros salen mal). Además incluye `robot_state_publisher` para los TFs.
+> **Por qué usar el launch y no `ros2 run` directo:** el launch ya configura `unlock_driver:=true`, `accel_time_ms`, `decel_time_ms`, `wheels_separation` y la geometría del URDF según `robot:=zlac706` o `robot:=zlac8015d`. Además incluye `robot_state_publisher` para los TFs.
 >
 > El launch tiene las secciones de IMU/EKF/odometría **comentadas**, así que hoy en día solo lanza ruedas + state publisher — exactamente lo que necesitas.
 

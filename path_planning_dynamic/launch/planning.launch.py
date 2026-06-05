@@ -5,6 +5,7 @@ import launch
 import launch_ros
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 
 
@@ -44,25 +45,32 @@ def resolve_map_path(raw_path: str, default_pkg_path: str) -> str:
     return str((default_pkg / expanded_path).resolve())
 
 
-def generate_launch_description():
+def load_robot_profile(robot_name: str) -> dict:
+    profiles_path = os.path.join(
+        get_package_share_directory('rover_bringup'),
+        'config',
+        'robot_profiles.yaml',
+    )
+    with open(profiles_path, 'r') as profiles_file:
+        profiles = yaml.safe_load(profiles_file) or {}
 
+    robots = profiles.get('robots', {})
+    if robot_name not in robots:
+        raise RuntimeError(f"Unknown robot profile '{robot_name}'. Expected one of: {', '.join(sorted(robots))}")
+    return robots[robot_name]
+
+
+def launch_setup(context, *args, **kwargs):
+    robot_name = LaunchConfiguration('robot').perform(context)
+    profile = load_robot_profile(robot_name)
     package_path = get_package_share_directory('path_planning_dynamic')
     paramsConfig = os.path.join(package_path, 'config', 'params.yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
-    planner_params = load_ros_parameters(paramsConfig, 'path_planning_node')
     map_path = resolve_map_path(
-        planner_params.get(
-            'map_path',
-            'package://autonomous_robot_simulation/utils/depot_lanelet2_map.osm',
-        ),
+        profile['map_path'],
         package_path,
     )
-    rviz_config = os.path.join(
-        get_package_share_directory('rover_bringup'), 'rviz', 'nav.rviz'
-    )
-
-    # Make rviz config path dynamic via a launch argument (default is package-relative path)
-    rviz_config_default = rviz_config
+    roi_max_y = float(profile['pointcloud_roi']['roi_max_y_'])
     rviz_config_arg = LaunchConfiguration('rviz_config')
 
 
@@ -89,7 +97,7 @@ def generate_launch_description():
         executable='pointcloud_roi_node',
         name='pointcloud_roi_node',
         output='screen',
-        parameters=[paramsConfig, {'use_sim_time': use_sim_time}],
+        parameters=[paramsConfig, {'roi_max_y_': roi_max_y, 'use_sim_time': use_sim_time}],
         additional_env={'RCUTILS_CONSOLE_OUTPUT_FORMAT': "{message}"}
     )
 
@@ -102,23 +110,40 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time}]
     )
 
-    simu_time = launch.actions.DeclareLaunchArgument(
-        'use_sim_time',
-        default_value='False',
-        description='Use simulation (Gazebo) clock if true')
-
-    rviz_arg = launch.actions.DeclareLaunchArgument(
-        'rviz_config',
-        default_value=rviz_config_default,
-        description='Path to rviz config file'
-    )
-    
-    return launch.LaunchDescription([
-        simu_time,
-        rviz_arg,
+    return [
         pointcloud_roi,
         pointcloud_clustering,
         publisher_node_planner,
         rviz,
-        
+    ]
+
+
+def generate_launch_description():
+    rviz_config_default = os.path.join(
+        get_package_share_directory('rover_bringup'), 'rviz', 'nav.rviz'
+    )
+
+    simu_time = DeclareLaunchArgument(
+        'use_sim_time',
+        default_value='False',
+        description='Use simulation (Gazebo) clock if true')
+
+    rviz_arg = DeclareLaunchArgument(
+        'rviz_config',
+        default_value=rviz_config_default,
+        description='Path to rviz config file'
+    )
+
+    robot_arg = DeclareLaunchArgument(
+        'robot',
+        default_value='zlac706',
+        choices=['zlac8015d', 'zlac706'],
+        description='Robot profile used for map and pointcloud ROI parameters'
+    )
+    
+    return launch.LaunchDescription([
+        robot_arg,
+        simu_time,
+        rviz_arg,
+        OpaqueFunction(function=launch_setup),
     ])

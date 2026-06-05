@@ -55,7 +55,7 @@ class OdomEncoder : public rclcpp::Node
       this->declare_parameter<bool>("wheelL_is_backward", true);
       get_parameter("wheelL_is_backward", wheelL_is_backward);
       
-      this->declare_parameter<double>("wheels_separation", 0.4);
+      this->declare_parameter<double>("wheels_separation", 0.315);
       get_parameter("wheels_separation", wheels_separation);
       RCLCPP_INFO(this->get_logger(), "wheels_separation: %.3f", wheels_separation);
       
@@ -235,5 +235,4 @@ int main(int argc, char * argv[])
   rclcpp::shutdown();
   return 0;
 }
-
 
