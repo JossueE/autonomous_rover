@@ -8,7 +8,7 @@ nmpc_controller_node:
     lambda_1: 4.0 #suaviza cambios de aceleración entre ruedas. Subirlo ayuda contra comandos bruscos.
     lambda_theta: 0.2 #peso para seguir orientación. Si está alto, el robot intenta corregir yaw rápido.
     lambda_v: 0.03 #peso para seguir orientación. Si está alto, el robot intenta corregir yaw rápido.
-    d_safe: 0.2
+    d_safe: 0.3
     voxel_size: 0.5
     max_range: 3.5
     max_obstacles: 20

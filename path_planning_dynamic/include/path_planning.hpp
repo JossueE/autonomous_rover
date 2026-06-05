@@ -166,7 +166,8 @@ private:
     std::string end_lanelet_name_;
     std::mutex global_planner_mutex_;
 
-    std::vector<point_struct> all_waypoints_from_global_planner_;  // waypoint with the central path and the neighbor lanelets
+    std::vector<point_struct> global_planner_waypoints_all_;  // all global planner priorities (1/2/3/4)
+    std::vector<point_struct> all_waypoints_from_global_planner_;  // active global planner priorities used by local planning
     visualization_msgs::msg::MarkerArray global_planner_markers_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr global_planner_publisher_;
     void publishGlobalPlanner();
@@ -174,6 +175,7 @@ private:
     void publishGlobalPlannerOccupancyGrid();
     void rebuildGlobalPlanner();
     void rebuildGlobalPlannerLocked();
+    void updateActiveGlobalPlannerWaypointsLocked(bool include_alternatives);
     bool updateStartLaneletFromCurrentPoseLocked(bool allow_nearest_fallback, const char *reason);
     rcl_interfaces::msg::SetParametersResult onPlannerParameters(
         const std::vector<rclcpp::Parameter> &params);
@@ -212,6 +214,16 @@ private:
     void buildWindowMask(cv::Mat &window_mask,
                          std::vector<cv::Point> &window_polygon) const;
     int computeInflationCells() const;
+    bool isMainPriorityBlockedInGrid(const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid,
+                                     bool &blocked) const;
+    void updatePrioritySwitchLocked(const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid);
+
+    double priority_switch_block_radius_m_ = 0.20;
+    int priority_switch_enable_cycles_ = 2;
+    int priority_switch_clear_cycles_ = 3;
+    int priority_blocked_cycles_ = 0;
+    int priority_clear_cycles_ = 0;
+    bool global_planner_alternatives_enabled_ = false;
 
     // publisher for the occupancy grid 
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_test_;
