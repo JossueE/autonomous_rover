@@ -151,23 +151,6 @@ bool isCrosswalkLanelet(const lanelet::ConstLanelet &ll)
                lanelet::AttributeValueString::Crosswalk;
 }
 
-double endpointDistance(const LaneletGeometry &a, const LaneletGeometry &b)
-{
-    if (a.centerline.empty() || b.centerline.empty())
-        return std::numeric_limits<double>::infinity();
-
-    const auto &a_start = a.centerline.front();
-    const auto &a_end = a.centerline.back();
-    const auto &b_start = b.centerline.front();
-    const auto &b_end = b.centerline.back();
-
-    return std::min({
-        pointDistance2d(a_start, b_start),
-        pointDistance2d(a_start, b_end),
-        pointDistance2d(a_end, b_start),
-        pointDistance2d(a_end, b_end)
-    });
-}
 
 void addDirectedEdge(GeometricGraph &graph, lanelet::Id from, lanelet::Id to, double cost)
 {
@@ -259,14 +242,21 @@ GeometricGraph buildGeometricGraph(const GeometryCache &cache,
         ids.push_back(entry.first);
     }
 
+    // Directed forward-only edges: A's end → B's start.
+    // Undirected endpoint matching (the old behaviour) allowed Dijkstra to traverse
+    // lanelets backward (start-to-start or end-to-end connections), producing waypoints
+    // with 180°-flipped headings that caused the local planner to stop the robot.
     for (size_t i = 0; i < ids.size(); ++i)
     {
-        for (size_t j = i + 1; j < ids.size(); ++j)
+        const auto &a = cache.at(ids[i]);
+        if (a.centerline.empty()) continue;
+        for (size_t j = 0; j < ids.size(); ++j)
         {
-            const auto &a = cache.at(ids[i]);
+            if (i == j) continue;
             const auto &b = cache.at(ids[j]);
-            if (endpointDistance(a, b) <= kEndpointConnectDist)
-                addUndirectedEdge(graph, cache, ids[i], ids[j], 0.0);
+            if (b.centerline.empty()) continue;
+            if (pointDistance2d(a.centerline.back(), b.centerline.front()) <= kEndpointConnectDist)
+                addDirectedEdge(graph, ids[i], ids[j], b.length);
         }
     }
 

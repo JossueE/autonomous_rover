@@ -248,7 +248,11 @@ private:
 
   void pathCallback(const nav_msgs::msg::Path::SharedPtr msg) {
     if (msg->poses.empty()) {
-      RCLCPP_WARN(this->get_logger(), "Received empty path. Ignoring.");
+      RCLCPP_INFO(this->get_logger(), "Received empty path: clearing reference, NMPC idle.");
+      reference_ = TrajectoryReference{};
+      has_reference_ = false;
+      active_ = false;
+      publishStop();
       return;
     }
 

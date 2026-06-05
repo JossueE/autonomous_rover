@@ -614,8 +614,14 @@ void path_planning::obstacle_info_callback(const path_planning_dynamic::msg::Obs
             publishGlobalPlannerLocked();
         }
 
-        RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
-        map_combination(msg);
+        if (has_active_goal) {
+            RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
+            map_combination(msg);
+        } else {
+            // No active navigation goal — publish empty trajectory so NMPC idles.
+            TreeFlat empty;
+            publishTrajectoryPath(empty, -1);
+        }
     }
 }
 
@@ -1165,9 +1171,17 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
     // when no route waypoints are available.
     double ref_heading = root_state.heading;
     if (use_waypoints) {
+        const double cos_robot = std::cos(root_state.heading);
+        const double sin_robot = std::sin(root_state.heading);
         double best_d2 = std::numeric_limits<double>::infinity();
         for (const auto& wp : all_waypoints_from_global_planner_) {
             if (wp.priority != 1) continue;   // priority-1 = main centerline
+            // Guard: skip waypoints whose heading is opposite to the robot's current
+            // heading (dot product < 0 means > 90° apart). This prevents a backward-
+            // pointing waypoint — from a mis-oriented lanelet — from inverting the
+            // A* forward reward and stalling the robot.
+            const double dot = cos_robot * std::cos(wp.heading) + sin_robot * std::sin(wp.heading);
+            if (dot < 0.0) continue;
             const double ddx = wp.x - root_state.x;
             const double ddy = wp.y - root_state.y;
             const double d2 = ddx * ddx + ddy * ddy;
