@@ -29,6 +29,9 @@ def _launch_setup(context, *args, **kwargs):
     profile = _load_robot_profile(robot_name)
     driver_package = profile['driver_package']
     wheels_separation = float(profile['wheels_separation'])
+    wheel_radius = float(profile['wheel_radius'])
+    max_linear_vel = float(profile['max_linear_vel'])
+    max_angular_vel = float(profile['max_angular_vel'])
     pkg_robot_core = get_package_share_directory('robot_core')
 
     robot_state_publisher_launch = IncludeLaunchDescription(
@@ -63,6 +66,7 @@ def _launch_setup(context, *args, **kwargs):
             'accel_time_ms': 500,
             'decel_time_ms': 500,
             'wheels_separation': wheels_separation,
+            'wheel_radius': wheel_radius,
             'resolution_mode': True,
         }]
     )
@@ -98,6 +102,10 @@ def _launch_setup(context, *args, **kwargs):
         name='teleop_joycon',
         output='screen',
         ros_arguments=['--log-level', log_level],
+        parameters=[{
+            'max_lin_vel': max_linear_vel,
+            'max_ang_vel': max_angular_vel,
+        }],
     )
 
     return [

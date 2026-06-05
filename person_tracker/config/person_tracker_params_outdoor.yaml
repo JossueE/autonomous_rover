@@ -26,8 +26,8 @@ person_tracker_node:
     max_angular_speed: 1.9              # rad/s (~109 deg/s) — +25% para giros más rápidos
     max_reverse_speed: 0.5              # m/s — cap aparte para la reversa (más suave que el avance)
     kp_linear: 1.2                     # bajado de 1.5 para reducir oscilación cerca del target
-    kp_angular: 3.1                     # +25% para llegar al tope angular más rápido
-    kd_angular: 1.5                     # ganancia D — anticipa giros laterales rápidos
+    kp_angular: 3.1
+    kd_angular: 1.5
     cx_velocity_ema_alpha: 0.6          # filtro EMA de velocidad cx_norm (0=sin filtro, 1=no actualiza)
     centering_deadzone: 0.05            # fraction of image width (no rotation inside zone)
     centering_suppress_linear_zone: 0.45  # P-distance taper starts when this off-center

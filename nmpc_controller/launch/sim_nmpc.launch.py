@@ -44,6 +44,7 @@ def _launch_setup(context, *args, **kwargs):
                 params_file,
                 {
                     "L": float(profile["nmpc"]["L"]),
+                    "v_max": float(profile["nmpc"]["v_max"]),
                     "use_sim_time": use_sim_time,
                     "map_frame": map_frame,
                     "base_frame": base_frame,
