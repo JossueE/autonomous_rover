@@ -4,7 +4,7 @@ path_planning_node:
     vehicle.axle_to_front: 0.20      # Distance from robot center to the front footprint using the minibase chassis length (0.55 m).
     vehicle.axle_to_back: 0.20       # Distance from robot center to the rear footprint using the minibase chassis length (0.55 m).
     vehicle.width: 0.25              # Total vehicle width including wheel thickness and separation from the minibase URDF.
-    planner.segment_steps: 5          # Number of rollout samples per motion primitive.
+    planner.segment_steps: 4          # Number of rollout samples per motion primitive.
     planner.sample_distance: 0.05     # Distance advanced per rollout sample for forward primitives (m).
     planner.square_size_m: 1.5        # Side length of the local planning window used for local occupancy reconstruction (m).
     planner.safe_clear: 0.2           # Minimum clearance margin to obstacles used by the planner cost/rejection logic (m).
@@ -17,8 +17,8 @@ path_planning_node:
     ackermann.wheelbase: 0.08         # Distance between front and rear axle (m).
     ackermann.max_steering_angle: 0.1 # Maximum steering angle of the front wheels (rad).
     differential.linear_step: 0.05    # Forward distance per rollout sample for moving differential primitives (m).
-    differential.max_angular_step: 0.1 # Heading increment per rollout sample for differential primitives (rad).
-    differential.angular_samples: 5   # Number of moving angular samples for the differential model.
+    differential.max_angular_step: 0.05 # Heading increment per rollout sample for differential primitives (rad).
+    differential.angular_samples: 3   # Number of moving angular samples for the differential model.
     differential.include_in_place_rotation: true # Adds pure rotation primitives for the differential model.
     tree_depth: 7                     # Maximum depth of the A* search tree for local path planning.
     branching_factor: 5               # Number of possible branches (actions/commands) per tree level.
