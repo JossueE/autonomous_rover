@@ -4,7 +4,7 @@ nmpc_controller_node:
     N: 10
     L: 0.315
     v_max: 0.3
-    a_max: 0.15
+    a_max: 0.05
     lambda_1: 2.5
     lambda_theta: 0.9
     lambda_v: 0.05
