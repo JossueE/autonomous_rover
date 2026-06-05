@@ -13,7 +13,9 @@ rover_bt_node:
     amcl_pose_topic: "/amcl_robot_pose"
     scan_topic: "/scan"
     pointcloud_topic: "/k4a/points2"
-    imu_topic: "/imu/data"
+    imu_topic: "/k4a/imu"                        # Azure Kinect DK onboard IMU (raw). Filtered = /k4a/imu_filtered
+    wheel_left_topic: "wheel/left_data"          # encoder feedback (both zlac706 + zlac8015d drivers)
+    wheel_right_topic: "wheel/right_data"
     trajectory_topic: "/sdv_trajectory"
     command_topic: "/rover_bt/commands"
     joy_topic: "/joy"
@@ -30,11 +32,12 @@ rover_bt_node:
     goal_tolerance: 0.3                         # meters — goal reached threshold
 
     # ── Sensor health ──
+    monitor_lidar: false                        # real HW has no lidar; sim launch sets this true
     lidar_stale_timeout: 5.0
     camera_stale_timeout: 5.0
     odom_stale_timeout: 3.0                     # critical — triggers e-stop
     imu_stale_timeout: 5.0
-    motor_stale_timeout: 5.0
+    motor_stale_timeout: 5.0                    # wheel-encoder liveness (warn watchdog; critical gate uses 1.5s in the tree)
 
     # ── TTS ──
     tts_enabled: true

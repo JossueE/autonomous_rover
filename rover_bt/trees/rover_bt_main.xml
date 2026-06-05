@@ -51,6 +51,20 @@
             <Speak message="Odometría perdida. Parada de emergencia."/>
           </Sequence>
         </Fallback>
+
+        <!-- Wheel encoders gone silent → e-stop, but ONLY while moving. At idle
+             the wheels are simply not reporting and that is not dangerous; the
+             warn-only watchdog below still surfaces it in status. require_moving
+             uses /rtabmap/odom velocity as an independent witness of motion. -->
+        <Fallback name="WheelCriticalGate">
+          <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"
+                             require_moving="true" moving_speed="0.05"/>
+          <Sequence name="WheelsLostEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <Speak message="Ruedas sin respuesta. Parada de emergencia."/>
+          </Sequence>
+        </Fallback>
       </Sequence>
 
       <!-- ════════════════════════════════════════════════════ -->
