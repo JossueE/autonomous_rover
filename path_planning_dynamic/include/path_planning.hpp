@@ -288,6 +288,9 @@ private:
     std::string global_planner_frame_id_;
     std::string global_planner_occupancy_output_topic_;
     nav_msgs::msg::OccupancyGrid global_planner_occupancy_grid_;
+    bool global_planner_has_goal_pose_ = false;
+    double global_planner_goal_x_ = 0.0;
+    double global_planner_goal_y_ = 0.0;
 
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr global_planner_occupancy_grid_publisher_;
 

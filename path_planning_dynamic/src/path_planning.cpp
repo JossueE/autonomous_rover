@@ -290,11 +290,23 @@ void path_planning::rebuildGlobalPlanner()
 
 void path_planning::rebuildGlobalPlannerLocked()
 {
+    bool has_start_heading = false;
+    double start_heading = 0.0;
+    {
+        std::lock_guard<std::mutex> state_lock(car_state_mutex_);
+        has_start_heading = car_state_valid_;
+        if (has_start_heading)
+            start_heading = car_state_->heading;
+    }
+
     global_planner_ = std::make_shared<GlobalPlanner>(
         x_offset_, y_offset_, map_path_, start_lanelet_id_, end_lanelet_id_,
         start_lanelet_name_, end_lanelet_name_, global_planner_resolution_,
         global_planner_close_radius_, global_planner_close_iters_,
-        global_planner_outside_value_, global_planner_frame_id_);
+        global_planner_outside_value_, global_planner_frame_id_,
+        has_start_heading, start_heading,
+        global_planner_has_goal_pose_,
+        global_planner_goal_x_, global_planner_goal_y_);
 
     all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
     publishGlobalPlannerLocked();
@@ -412,6 +424,7 @@ rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
         end_lanelet_id_ = new_end_id;
         start_lanelet_name_ = new_start_name;
         end_lanelet_name_ = new_end_name;
+        global_planner_has_goal_pose_ = false;
         RCLCPP_INFO(this->get_logger(),
             "Rebuilding global planner: start_id=%d end_id=%d start_name='%s' end_name='%s'",
             start_lanelet_id_, end_lanelet_id_,
@@ -1867,6 +1880,10 @@ void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateT
     {
         getCurrentRobotState();
         std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        global_planner_goal_x_ = goal->target_pose.pose.position.x;
+        global_planner_goal_y_ = goal->target_pose.pose.position.y;
+        global_planner_has_goal_pose_ =
+            (global_planner_goal_x_ != 0.0 || global_planner_goal_y_ != 0.0);
         updateStartLaneletFromCurrentPoseLocked(true, "new navigation goal");
 
         // Resolve the goal lanelet to an *id* before rebuilding so the planner
