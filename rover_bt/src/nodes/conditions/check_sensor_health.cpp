@@ -22,7 +22,11 @@ BT::PortsList CheckSensorHealth::providedPorts() {
         "actually moving (|linear_vel| > moving_speed). Used for the wheel gate: "
         "wheels going silent is only an emergency if we are trying to move."),
     BT::InputPort<double>("moving_speed", 0.05,
-        "Speed threshold (m/s) above which the robot counts as moving, for require_moving.")
+        "Speed threshold (m/s) above which the robot counts as moving, for require_moving."),
+    BT::InputPort<double>("lost_debounce_sec", 1.0,
+        "odom only: how long RTAB-Map odometry must be CONTINUOUSLY lost before "
+        "the gate fails. Tolerates brief tracking dropouts so a momentary loss "
+        "does not trigger the e-stop.")
   };
 }
 
@@ -54,9 +58,20 @@ BT::NodeStatus CheckSensorHealth::tick() {
     last = ctx->last_camera_time.load();
   } else if (name == "odom") {
     if (ctx->rtabmap_odom_lost.load()) {
-      RCLCPP_WARN_THROTTLE(ctx->node->get_logger(), *ctx->node->get_clock(), 2000,
-                           "Sensor watchdog: RTAB-Map reports odometry lost");
-      return BT::NodeStatus::FAILURE;
+      // Debounce: only escalate to FAILURE once odom has been continuously lost
+      // for at least lost_debounce_sec. A brief dropout (RTAB-Map momentarily
+      // losing then re-acquiring tracking) is tolerated as healthy.
+      const double debounce = getInput<double>("lost_debounce_sec").value_or(1.0);
+      const double since = ctx->rtabmap_odom_lost_since.load();
+      const double lost_for = (since > 0.0) ? (now - since) : 0.0;
+      if (lost_for >= debounce) {
+        RCLCPP_WARN_THROTTLE(ctx->node->get_logger(), *ctx->node->get_clock(), 2000,
+                             "Sensor watchdog: RTAB-Map odometry lost for %.2fs "
+                             "(limit %.2fs)", lost_for, debounce);
+        return BT::NodeStatus::FAILURE;
+      }
+      // Briefly lost but within the tolerance window: report healthy for now.
+      return BT::NodeStatus::SUCCESS;
     }
     last = ctx->last_rtabmap_odom_info_time.load();
     if (last == 0.0) {
