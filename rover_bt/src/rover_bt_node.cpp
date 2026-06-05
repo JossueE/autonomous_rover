@@ -44,7 +44,21 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("amcl_pose_topic", "/amcl_robot_pose");
   this->declare_parameter("scan_topic", "/scan");
   this->declare_parameter("pointcloud_topic", "/k4a/points2");
-  this->declare_parameter("imu_topic", "/imu/data");
+  // IMU is the Azure Kinect DK's onboard IMU (raw device output), not the old
+  // witmotion sensor. The Kinect driver publishes /k4a/imu; imu_filter_madgwick
+  // republishes it as /k4a/imu_filtered for rtabmap. We watch the raw topic so a
+  // dead Kinect IMU is caught directly, independent of the filter node.
+  this->declare_parameter("imu_topic", "/k4a/imu");
+  // Wheel encoder feedback. Both robots' drivers (zlac706 / zlac8015d) publish
+  // these std_msgs/Float64 topics; a message on either = "wheels reporting".
+  this->declare_parameter("wheel_left_topic", "wheel/left_data");
+  this->declare_parameter("wheel_right_topic", "wheel/right_data");
+  // Lidar exists only in simulation; real hardware has none. Left false here and
+  // enabled from the sim launch so the lidar watchdog never false-alarms on HW.
+  this->declare_parameter("monitor_lidar", false);
+  // Wheel drivers run on real hardware but not in Gazebo sim, so default true
+  // and disable from the sim launch.
+  this->declare_parameter("monitor_wheels", true);
   this->declare_parameter("trajectory_topic", "/sdv_trajectory");
   this->declare_parameter("command_topic", "/rover_bt/commands");
   this->declare_parameter("joy_topic", "/joy");
@@ -117,6 +131,9 @@ void RoverBTNode::init_subsystems() {
   ctx_->arbitrator = arbitrator_.get();
   ctx_->location_registry = location_registry_.get();
   ctx_->tts = tts_.get();
+  ctx_->node_start_time.store(this->get_clock()->now().seconds());
+  ctx_->monitor_lidar.store(this->get_parameter("monitor_lidar").as_bool());
+  ctx_->monitor_wheels.store(this->get_parameter("monitor_wheels").as_bool());
 
   // Load patrol waypoints from parameters.
   // An empty YAML list (patrol_waypoints: []) is loaded as PARAMETER_NOT_SET,
@@ -164,6 +181,16 @@ void RoverBTNode::init_ros_interfaces() {
   std::string imu_topic = this->get_parameter("imu_topic").as_string();
   imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
     imu_topic, 10, std::bind(&RoverBTNode::on_imu, this, std::placeholders::_1));
+
+  // Wheel encoder liveness: both feedback topics share one callback that just
+  // stamps last_motor_time. Float64 carries no header, so we use receive time.
+  std::string wheel_left_topic = this->get_parameter("wheel_left_topic").as_string();
+  wheel_left_sub_ = this->create_subscription<std_msgs::msg::Float64>(
+    wheel_left_topic, 10, std::bind(&RoverBTNode::on_wheel_data, this, std::placeholders::_1));
+
+  std::string wheel_right_topic = this->get_parameter("wheel_right_topic").as_string();
+  wheel_right_sub_ = this->create_subscription<std_msgs::msg::Float64>(
+    wheel_right_topic, 10, std::bind(&RoverBTNode::on_wheel_data, this, std::placeholders::_1));
 
   std::string trajectory_topic = this->get_parameter("trajectory_topic").as_string();
   trajectory_sub_ = this->create_subscription<nav_msgs::msg::Path>(
@@ -241,6 +268,8 @@ void RoverBTNode::init_behavior_tree() {
   odom_stale_timeout_   = this->get_parameter("odom_stale_timeout").as_double();
   imu_stale_timeout_    = this->get_parameter("imu_stale_timeout").as_double();
   motor_stale_timeout_  = this->get_parameter("motor_stale_timeout").as_double();
+  monitor_lidar_        = this->get_parameter("monitor_lidar").as_bool();
+  monitor_wheels_       = this->get_parameter("monitor_wheels").as_bool();
 
   // Tick timer (10Hz)
   double tick_rate = this->get_parameter("bt_tick_rate").as_double();
@@ -324,14 +353,34 @@ void RoverBTNode::publish_status() {
   double now = this->get_clock()->now().seconds();
   msg.sensor_health.push_back(
     make_health("odom",   ctx_->last_odom_time.load(),   now, odom_stale_timeout_));
-  msg.sensor_health.push_back(
-    make_health("lidar",  ctx_->last_lidar_time.load(),  now, lidar_stale_timeout_));
+  if (monitor_lidar_) {
+    msg.sensor_health.push_back(
+      make_health("lidar",  ctx_->last_lidar_time.load(),  now, lidar_stale_timeout_));
+  } else {
+    // Real hardware has no lidar; report it as disabled rather than stale so
+    // downstream consumers don't flag a missing sensor that isn't expected.
+    rover_bt::msg::SensorHealth lidar;
+    lidar.name = "lidar";
+    lidar.status = rover_bt::msg::SensorHealth::OK;
+    lidar.last_seen_ago = -1.0f;
+    lidar.detail = "disabled (sim only)";
+    msg.sensor_health.push_back(lidar);
+  }
   msg.sensor_health.push_back(
     make_health("camera", ctx_->last_camera_time.load(), now, camera_stale_timeout_));
   msg.sensor_health.push_back(
     make_health("imu",    ctx_->last_imu_time.load(),    now, imu_stale_timeout_));
-  msg.sensor_health.push_back(
-    make_health("motor",  ctx_->last_motor_time.load(),  now, motor_stale_timeout_));
+  if (monitor_wheels_) {
+    msg.sensor_health.push_back(
+      make_health("motor",  ctx_->last_motor_time.load(),  now, motor_stale_timeout_));
+  } else {
+    rover_bt::msg::SensorHealth motor;
+    motor.name = "motor";
+    motor.status = rover_bt::msg::SensorHealth::OK;
+    motor.last_seen_ago = -1.0f;
+    motor.detail = "disabled (sim)";
+    msg.sensor_health.push_back(motor);
+  }
 
   status_pub_->publish(msg);
 }
@@ -376,6 +425,13 @@ void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
 
 void RoverBTNode::on_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {
   ctx_->last_imu_time.store(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
+}
+
+void RoverBTNode::on_wheel_data(const std_msgs::msg::Float64::SharedPtr /*msg*/) {
+  // std_msgs/Float64 has no header; the fact that a message arrived is the
+  // signal we need ("a wheel encoder is reporting"). The 8015d driver skips
+  // publishing when it can't read the encoder, so silence => wheels not OK.
+  ctx_->last_motor_time.store(this->get_clock()->now().seconds());
 }
 
 void RoverBTNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {

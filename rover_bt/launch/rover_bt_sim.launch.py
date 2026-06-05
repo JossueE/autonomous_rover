@@ -62,6 +62,14 @@ def generate_launch_description():
                 # sim waypoints whose coords/lanelets match test_simulation.osm.
                 {'dynamic_waypoints_file':
                     LaunchConfiguration('dynamic_waypoints_file')},
+                # Sim has a lidar (/scan); real hardware does not. Enable the
+                # lidar watchdog only here.
+                {'monitor_lidar': True},
+                # Sim has no wheel-encoder drivers (wheel/left_data etc.), so
+                # disable the wheel watchdog/e-stop gate here.
+                {'monitor_wheels': False},
+                # Sim publishes the IMU on /imu/data (not the Kinect's /k4a/imu).
+                {'imu_topic': '/imu/data'},
                 # Simulation topic overrides
                 {'pointcloud_topic': '/depth_camera/points'},
                 {'rtabmap_rgb_topic': '/depth_camera/image'},

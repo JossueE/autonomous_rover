@@ -17,6 +17,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/joy.hpp>
+#include <std_msgs/msg/float64.hpp>
 
 #include "rover_bt/msg/command.hpp"
 #include "rover_bt/msg/rover_status.hpp"
@@ -48,6 +49,7 @@ private:
   void on_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void on_odom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void on_imu(const sensor_msgs::msg::Imu::SharedPtr msg);
+  void on_wheel_data(const std_msgs::msg::Float64::SharedPtr msg);
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void on_trajectory(const nav_msgs::msg::Path::SharedPtr msg);
   void on_command(const rover_bt::msg::Command::SharedPtr msg);
@@ -86,6 +88,10 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr camera_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+  // Both robots' wheel drivers publish wheel/left_data + wheel/right_data; a
+  // message on either updates the motor/wheel liveness timestamp.
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_left_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_right_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<rover_bt::msg::Command>::SharedPtr command_sub_;
@@ -105,6 +111,8 @@ private:
   double odom_stale_timeout_{3.0};
   double imu_stale_timeout_{5.0};
   double motor_stale_timeout_{5.0};
+  bool monitor_lidar_{false};
+  bool monitor_wheels_{true};
 };
 
 }  // namespace rover_bt
