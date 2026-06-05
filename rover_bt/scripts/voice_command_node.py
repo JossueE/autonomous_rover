@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
 import threading
 import time
@@ -317,6 +318,13 @@ class VoiceCommandNode(Node):
             10,
         )
 
+        # Single-threaded TTS worker: serialises all playback so two concurrent
+        # Speak nodes never share the PyAudio stream, which would corrupt it and
+        # silently kill all subsequent speech.
+        self._tts_queue: queue.Queue = queue.Queue()
+        self._tts_thread = threading.Thread(target=self._tts_worker, daemon=True)
+        self._tts_thread.start()
+
         self.audio_thread = threading.Thread(target=self._audio_loop, daemon=True)
         self.audio_thread.start()
 
@@ -340,7 +348,15 @@ class VoiceCommandNode(Node):
         text = msg.data.strip()
         if not text:
             return
-        threading.Thread(target=self._speak, args=(text,), daemon=True).start()
+        self._tts_queue.put(text)
+
+    def _tts_worker(self):
+        while not self._stop_event.is_set():
+            try:
+                text = self._tts_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            self._speak(text)
 
     def _speak(self, text: str):
         self._speaking.set()
