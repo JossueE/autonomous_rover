@@ -33,10 +33,13 @@
           <Inverter name="NoEmergency">
             <CheckCommand expected="emergency_stop"/>
           </Inverter>
-          <!-- Emergency detected → stop everything -->
+          <!-- Emergency detected → stop everything. Mark this as a NON-odom
+               emergency so EMERGENCY does not auto-resume: a commanded e-stop
+               always requires an explicit 'resume'. -->
           <Sequence name="DoEmergency">
             <ZeroTwist/>
             <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
             <Speak message="Parada de emergencia activada"/>
             <ClearCommand/>
           </Sequence>
@@ -44,10 +47,14 @@
 
         <!-- Critical sensor check: odom loss = e-stop -->
         <Fallback name="CriticalSensorGate">
-          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"/>
+          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"
+                             lost_debounce_sec="1.0"/>
+          <!-- Tag the emergency as odom-caused so EMERGENCY can auto-resume once
+               RTAB-Map odometry recovers (relocalizes), without a manual 'resume'. -->
           <Sequence name="OdomLostEmergency">
             <ZeroTwist/>
             <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="true"/>
             <Speak message="Odometría perdida. Parada de emergencia."/>
           </Sequence>
         </Fallback>
@@ -62,6 +69,7 @@
           <Sequence name="WheelsLostEmergency">
             <ZeroTwist/>
             <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
             <Speak message="Ruedas sin respuesta. Parada de emergencia."/>
           </Sequence>
         </Fallback>
@@ -148,8 +156,26 @@
 
         <!-- === EMERGENCY MODE === -->
         <Fallback name="EmergencyMode">
+          <!-- Auto-recover from an odom-loss emergency once RTAB-Map odometry is
+               healthy again (relocalized). Only fires when the emergency was
+               caused by odom loss (emergency_from_odom=true): commanded e-stops
+               and wheel-loss e-stops clear that flag, so they still require a
+               manual 'resume'. CheckSensorHealth(odom) returns SUCCESS only when
+               odometry is no longer lost AND fresh, so this cannot resume while
+               RTAB-Map is still lost. The Safety layer's CriticalSensorGate
+               re-asserts EMERGENCY every tick while odom is lost, so this branch
+               can only win on a tick where odom has genuinely recovered. -->
+          <Sequence name="AutoResumeFromOdom">
+            <CheckFlag flag="emergency_from_odom"/>
+            <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Odometría recuperada. Operación reanudada."/>
+          </Sequence>
           <Sequence name="ResumeFromEmergency">
             <CheckCommand expected="resume"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
             <SetMode mode="IDLE"/>
             <Speak message="Operación reanudada."/>
             <ClearCommand/>

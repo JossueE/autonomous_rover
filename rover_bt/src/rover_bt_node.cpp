@@ -516,8 +516,16 @@ void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
 }
 
 void RoverBTNode::on_rtabmap_odom_info(const rtabmap_msgs::msg::OdomInfo::SharedPtr msg) {
-  ctx_->last_rtabmap_odom_info_time.store(this->get_clock()->now().seconds());
-  ctx_->rtabmap_odom_lost.store(msg->lost);
+  const double now = this->get_clock()->now().seconds();
+  ctx_->last_rtabmap_odom_info_time.store(now);
+  // Stamp the moment odom *becomes* lost so the watchdog can debounce brief
+  // dropouts; clear the stamp as soon as it recovers.
+  const bool was_lost = ctx_->rtabmap_odom_lost.exchange(msg->lost);
+  if (msg->lost && !was_lost) {
+    ctx_->rtabmap_odom_lost_since.store(now);
+  } else if (!msg->lost) {
+    ctx_->rtabmap_odom_lost_since.store(0.0);
+  }
 }
 
 void RoverBTNode::on_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {

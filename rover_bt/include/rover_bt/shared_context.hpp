@@ -42,6 +42,10 @@ struct SharedContext {
   // while /rtabmap/odom_info_lite tells us if RTAB-Map has lost tracking.
   std::atomic<double> last_rtabmap_odom_info_time{0.0};
   std::atomic<bool> rtabmap_odom_lost{false};
+  // Node-clock time (s) at which rtabmap_odom_lost last transitioned false→true,
+  // or 0.0 while odom is healthy. Lets the watchdog debounce brief losses: the
+  // e-stop only fires after odom has been continuously lost past a threshold.
+  std::atomic<double> rtabmap_odom_lost_since{0.0};
   std::atomic<double> last_imu_time{0.0};
   // last_motor_time = last time EITHER wheel encoder topic was received.
   // Both robots (zlac706 / zlac8015d) publish wheel/left_data + wheel/right_data,
