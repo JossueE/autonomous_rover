@@ -409,10 +409,12 @@ void RoverBTNode::on_command(const rover_bt::msg::Command::SharedPtr msg) {
 }
 
 void RoverBTNode::on_joy(const sensor_msgs::msg::Joy::SharedPtr msg) {
-  // Mark the joystick as active only when the R1 deadman is held — mirrors
-  // the deadman gate in teleop_joycon so TELEOP_JOYCON mode is entered only
-  // during intentional manual driving, not from incidental stick movement.
-  const bool deadman = msg->buttons.size() > 5 && msg->buttons[5] == 1;
+  // Mirror teleop_joycon's three-way R1 detection: analog axis (axes[5] < 0),
+  // button 7 (RT on some modes), or button 5 (R1 digital).
+  const bool deadman =
+    (msg->axes.size()    > 5 && msg->axes[5]   < 0.0f) ||
+    (msg->buttons.size() > 7 && msg->buttons[7] == 1)  ||
+    (msg->buttons.size() > 5 && msg->buttons[5] == 1);
   if (deadman) {
     ctx_->last_joy_active_time.store(this->now().seconds());
   }
