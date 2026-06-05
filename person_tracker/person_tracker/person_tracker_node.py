@@ -35,8 +35,8 @@ class State:
     TRACKING          = 'TRACKING'
     LOST_WAITING      = 'LOST_WAITING'
     LOST_REVERSING    = 'LOST_REVERSING'
-    LOST_TURNING_LEFT = 'LOST_TURNING_LEFT'
-    LOST_TURNING_RIGHT= 'LOST_TURNING_RIGHT'
+    LOST_SEARCH_FIRST = 'LOST_SEARCH_FIRST'   # turn toward last-seen side first
+    LOST_SEARCH_SECOND= 'LOST_SEARCH_SECOND'  # then sweep the opposite side
     LOST_STOPPED      = 'LOST_STOPPED'
 
 
@@ -73,6 +73,11 @@ class PersonDetectorNode(Node):
         self.declare_parameter('reid_model',                    'osnet_x0_25')
         self.declare_parameter('reid_similarity_threshold',     0.7)
         self.declare_parameter('reid_ema_alpha',                0.9)
+        # Re-ID temporal hysteresis (B): re-acquire at a lower band and require
+        # several consecutive misses before declaring the target lost, so brief
+        # occlusions don't kick the FSM into APPROACHING/PIVOTING.
+        self.declare_parameter('reid_reacquire_threshold',      0.55)
+        self.declare_parameter('reid_lost_frames',              3)
         # Tracking control
         self.declare_parameter('target_distance_m',             1.1)
         self.declare_parameter('max_linear_speed',              2.0)
@@ -127,6 +132,14 @@ class PersonDetectorNode(Node):
         self.declare_parameter('pivot_max_angular_speed',       1.0)
         self.declare_parameter('pivot_ramp_duration_s',         0.3)
         self.declare_parameter('pivot_max_angle_rad',           2.5)
+        # LOST robustness: give up pivoting after this wall-clock time even if the
+        # IMU never accumulated enough angle (e.g. /imu silent or wrong yaw axis),
+        # so entry into the LOST recovery chain never depends solely on the IMU.
+        self.declare_parameter('pivot_max_duration_s',          4.0)
+        # Performance / safety
+        self.declare_parameter('reid_every_n_frames',           1)    # 1 = OSNet every frame; >1 = IoU between
+        self.declare_parameter('reid_iou_threshold',            0.3)  # IoU to keep the target on non-Re-ID frames
+        self.declare_parameter('frame_timeout_s',               0.5)  # stop the robot if no RGB frame for this long
 
         p = self.get_parameter
         model_path          = str(p('model_path').value)
@@ -141,6 +154,8 @@ class PersonDetectorNode(Node):
         reid_model_name         = str(p('reid_model').value)
         self.reid_threshold     = float(p('reid_similarity_threshold').value)
         self.reid_ema_alpha     = float(p('reid_ema_alpha').value)
+        self.reid_reacquire_threshold = float(p('reid_reacquire_threshold').value)
+        self.reid_lost_frames   = int(p('reid_lost_frames').value)
 
         self.target_distance_m          = float(p('target_distance_m').value)
         self.max_linear_speed           = float(p('max_linear_speed').value)
@@ -195,6 +210,11 @@ class PersonDetectorNode(Node):
         self.pivot_max_angular_speed    = float(p('pivot_max_angular_speed').value)
         self.pivot_ramp_duration_s      = float(p('pivot_ramp_duration_s').value)
         self.pivot_max_angle_rad        = float(p('pivot_max_angle_rad').value)
+        self.pivot_max_duration_s       = float(p('pivot_max_duration_s').value)
+
+        self.reid_every_n               = max(1, int(p('reid_every_n_frames').value))
+        self.reid_iou_threshold         = float(p('reid_iou_threshold').value)
+        self.frame_timeout_s            = float(p('frame_timeout_s').value)
 
         # ------------------------------------------------------------------ #
         # YOLO
@@ -224,6 +244,23 @@ class PersonDetectorNode(Node):
             device=reid_device
         )
         self.target_embedding: np.ndarray | None = None
+
+        # Re-ID hysteresis state (B): consecutive sub-threshold frames and the last
+        # confident detection, so we can coast through brief occlusions instead of
+        # immediately declaring the target lost.
+        self.missed_frames: int = 0
+        self.last_target_box: list | None = None
+        self.last_target_conf: float = 0.0
+
+        # Re-ID throttle + frame watchdog state.
+        self.frame_count: int = 0
+        self.last_rgb_time: float | None = None
+        self._frames_stale: bool = False
+
+        # Last side the target was seen on (A), same sign convention as
+        # pivot_angular_sign: +1 = person was on the left (search CCW first),
+        # -1 = person was on the right (search CW first). Orders the LOST sweep.
+        self.last_seen_side: float = 1.0
 
         # Centered-depth buffer (timestamps, distance_m) — feeds curved off-center motion
         self.center_dist_buffer: deque = deque()
@@ -275,7 +312,19 @@ class PersonDetectorNode(Node):
         # ------------------------------------------------------------------ #
         # QoS
         # ------------------------------------------------------------------ #
-        sensor_qos = QoSProfile(
+        # Images/depth: BEST_EFFORT so the (slow) detector never backpressures the
+        # Kinect driver's publish loop. A BEST_EFFORT subscriber still connects to
+        # the driver's RELIABLE publishers, but drops the reliability handshake that
+        # was inflating the driver's grab loop ("Image processing thread running behind").
+        image_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        # CameraInfo: keep RELIABLE + TRANSIENT_LOCAL to match the driver and still
+        # receive the latched message even if we subscribe late.
+        info_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
@@ -285,9 +334,9 @@ class PersonDetectorNode(Node):
         # ------------------------------------------------------------------ #
         # Subscribers
         # ------------------------------------------------------------------ #
-        self.create_subscription(Image,      rgb_topic,   self.rgb_callback,   sensor_qos)
-        self.create_subscription(Image,      depth_topic, self.depth_callback, sensor_qos)
-        self.create_subscription(CameraInfo, info_topic,  self.info_callback,  sensor_qos)
+        self.create_subscription(Image,      rgb_topic,   self.rgb_callback,   image_qos)
+        self.create_subscription(Image,      depth_topic, self.depth_callback, image_qos)
+        self.create_subscription(CameraInfo, info_topic,  self.info_callback,  info_qos)
 
         # IMU: high-rate, best-effort QoS suits the Kinect IMU stream (~1.6 kHz).
         imu_qos = QoSProfile(
@@ -305,6 +354,11 @@ class PersonDetectorNode(Node):
         self.pub_bbox     = self.create_publisher(Float32MultiArray,   '/person_tracker/person_bbox',         10)
         if self.publish_debug:
             self.pub_debug = self.create_publisher(Image, '/person_tracker/detections_image', 10)
+
+        # Safety watchdog: if RGB frames stop (camera crash/USB drop), the rgb
+        # callback stops firing and the last cmd_vel would persist. This timer
+        # publishes a hard stop whenever frames go stale.
+        self.create_timer(0.1, self._frame_watchdog)
 
         self.get_logger().info(
             f'PersonDetector ready. RGB: {rgb_topic} | Depth: {depth_topic} | '
@@ -485,8 +539,12 @@ class PersonDetectorNode(Node):
             if person_found and abs_err < self.recover_zone:
                 self._enter_substate_normal()
                 return
-            if self.pivot_angle_accumulated >= self.pivot_max_angle_rad:
-                # Pivoted enough without finding; signal caller to bail to LOST recovery.
+            pivoted_enough = self.pivot_angle_accumulated >= self.pivot_max_angle_rad
+            # Time fallback: bail even if the IMU never accumulated angle (silent
+            # /imu or wrong yaw axis), so LOST entry never hangs on the IMU.
+            timed_out = (time.time() - self.substate_start_time) >= self.pivot_max_duration_s
+            if pivoted_enough or timed_out:
+                # Pivoted enough (or long enough) without finding; bail to LOST recovery.
                 self._tracking_give_up = True
 
     # ---------------------------------------------------------------------- #
@@ -494,7 +552,8 @@ class PersonDetectorNode(Node):
     # ---------------------------------------------------------------------- #
 
     def _twist_normal(self, cx_norm: float, ref_distance: float | None) -> tuple[float, float]:
-        """Pure P-distance for linear, PD for angular. No arc coupling."""
+        """P-distance for linear, PD for angular, plus optional arc coupling so
+        the robot follows in a curve instead of pivoting in place."""
         error_x = cx_norm - 0.5
         abs_err = abs(error_x)
 
@@ -512,6 +571,19 @@ class PersonDetectorNode(Node):
             # (reversing fast away from a too-close person feels jarring).
             linear_x = float(np.clip(self.kp_linear * error_dist,
                                      -self.max_reverse_speed, self.max_linear_speed))
+
+        # Arc coupling: when the target drifts off-center at the holding distance,
+        # keep some forward speed so the robot turns along a smooth curve instead
+        # of pivoting in place. Scale with how hard we're turning, taper to zero as
+        # the target nears the image edge (can't arc toward something ~90° aside),
+        # and never push closer than the holding distance (keeps the 0.70 m floor).
+        if self.arc_min_speed > 0.0:
+            turn_frac   = min(1.0, abs(angular_z) / max(1e-6, self.max_angular_speed))
+            center_frac = max(0.0, 1.0 - abs_err / max(1e-6, self.curve_max_error_x))
+            arc_forward = self.arc_min_speed * turn_frac * center_frac
+            if ref_distance > self.target_distance_m - 0.05:
+                linear_x = max(linear_x, arc_forward)
+
         return linear_x, angular_z
 
     def _twist_approaching(self) -> tuple[float, float]:
@@ -756,7 +828,46 @@ class PersonDetectorNode(Node):
         self.pub_cmd_vel.publish(msg)
 
     def _stop(self):
-        self._publish_twist(0.0, 0.0)
+        # A stop must be a true stop: publish hard zero, bypassing obstacle
+        # repulsion and the velocity ramp. Routing zero through _publish_twist
+        # let a phantom obstacle's negative Fx turn "stop" into a slow reverse
+        # (e.g. while SEARCHING/LOST the robot crept backwards). Reset the ramp
+        # state so the next real command starts from rest.
+        self.last_linear_cmd = 0.0
+        self.last_cmd_time = None
+        msg = Twist()
+        self.pub_cmd_vel.publish(msg)
+
+    def _frame_watchdog(self):
+        """Stop the robot if RGB frames go stale (camera crash / USB drop)."""
+        if self.last_rgb_time is None:
+            return
+        stale = (time.time() - self.last_rgb_time) > self.frame_timeout_s
+        if stale:
+            if not self._frames_stale:
+                self.get_logger().warn(
+                    f'Sin frames RGB por >{self.frame_timeout_s:.1f}s — '
+                    f'deteniendo el robot por seguridad.'
+                )
+                self._frames_stale = True
+            self._stop()
+        elif self._frames_stale:
+            self.get_logger().info('Frames RGB reanudados.')
+            self._frames_stale = False
+
+    @staticmethod
+    def _iou(box_a: list, box_b: list) -> float:
+        """Intersection-over-union of two xyxy boxes."""
+        ax1, ay1, ax2, ay2 = box_a
+        bx1, by1, bx2, by2 = box_b
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+        inter = iw * ih
+        area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+        area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+        union = area_a + area_b - inter
+        return float(inter / union) if union > 1e-6 else 0.0
 
     # ---------------------------------------------------------------------- #
     # Distance estimation from depth map
@@ -782,6 +893,9 @@ class PersonDetectorNode(Node):
     # ---------------------------------------------------------------------- #
 
     def rgb_callback(self, msg: Image):
+        # Mark frame arrival for the watchdog (even if decoding fails below).
+        self.last_rgb_time = time.time()
+        self.frame_count += 1
         try:
             frame = self._imgmsg_to_numpy(msg, 'bgr8')
             frame = cv2.resize(frame, (640, 360))
@@ -803,7 +917,8 @@ class PersonDetectorNode(Node):
         result = results[0]
         boxes  = result.boxes
 
-        # Build list of (box_xyxy, conf, embedding) for all person detections
+        # Build list of (box_xyxy, conf) for all person detections. Embeddings are
+        # extracted lazily (only on Re-ID frames) to keep the loop cheap.
         detections = []
         if boxes is not None and len(boxes) > 0:
             for box in boxes:
@@ -812,8 +927,7 @@ class PersonDetectorNode(Node):
                     continue
                 xyxy = box.xyxy[0].tolist()
                 conf = float(box.conf[0])
-                emb  = self._extract_embedding(frame, xyxy)
-                detections.append((xyxy, conf, emb))
+                detections.append((xyxy, conf))
 
         # ---- Find best match for the current target ----
         target_box  = None
@@ -821,22 +935,30 @@ class PersonDetectorNode(Node):
         target_emb  = None
         target_dist = None
 
+        # Run OSNet Re-ID on lock and every Nth frame; in between, track the target
+        # cheaply by IoU to the last box. This caps the per-frame OSNet cost.
+        do_reid = (self.target_embedding is None) or (self.frame_count % self.reid_every_n == 0)
+
         if self.target_embedding is None:
-            # SEARCHING: lock onto first detected person
+            # SEARCHING: lock onto the highest-confidence person (needs an embedding)
             if detections:
-                best = max(detections, key=lambda d: d[1])  # highest confidence
-                xyxy, conf, emb = best
+                xyxy, conf = max(detections, key=lambda d: d[1])
+                emb = self._extract_embedding(frame, xyxy)
                 if emb is not None:
                     target_box  = xyxy
                     target_conf = conf
-                    target_emb  = emb
                     self.target_embedding = emb / (np.linalg.norm(emb) + 1e-8)
+                    self.missed_frames   = 0
+                    self.last_target_box = xyxy
+                    self.last_target_conf = conf
                     self._transition(State.TRACKING)
                     self.get_logger().info('Target locked via Re-ID.')
-        else:
-            # TRACKING / LOST_*: find detection with highest cosine similarity
+
+        elif do_reid:
+            # Re-ID frame: extract embeddings and match by cosine similarity.
             best_sim = -1.0
-            for xyxy, conf, emb in detections:
+            for xyxy, conf in detections:
+                emb = self._extract_embedding(frame, xyxy)
                 if emb is None:
                     continue
                 sim = _cosine_similarity(self.target_embedding, emb)
@@ -846,12 +968,46 @@ class PersonDetectorNode(Node):
                     target_conf = conf
                     target_emb  = emb
 
-            if best_sim < self.reid_threshold:
-                # No match found in this frame
-                target_box = None
-                target_emb = None
+            # ── Re-ID temporal hysteresis (B) ──────────────────────────────
+            # A match within the lower re-acquire band counts as "found"; only a
+            # strong match (>= reid_threshold) updates the target embedding (avoids
+            # drifting onto a look-alike). When no match clears the band, coast on
+            # the last confident box for a few frames before declaring it lost.
+            if best_sim >= self.reid_reacquire_threshold:
+                self.missed_frames = 0
+                self.last_target_box  = target_box
+                self.last_target_conf = target_conf
+                if best_sim >= self.reid_threshold:
+                    self._update_target_embedding(target_emb)
             else:
-                self._update_target_embedding(target_emb)
+                self.missed_frames += 1
+                if self.missed_frames < self.reid_lost_frames and self.last_target_box is not None:
+                    target_box  = self.last_target_box
+                    target_conf = self.last_target_conf
+                else:
+                    target_box = None
+
+        else:
+            # Throttled frame: associate to the last box by IoU (no OSNet).
+            best_iou, cand_box, cand_conf = 0.0, None, 0.0
+            if self.last_target_box is not None:
+                for xyxy, conf in detections:
+                    iou = self._iou(xyxy, self.last_target_box)
+                    if iou > best_iou:
+                        best_iou, cand_box, cand_conf = iou, xyxy, conf
+            if best_iou >= self.reid_iou_threshold:
+                self.missed_frames = 0
+                target_box  = cand_box
+                target_conf = cand_conf
+                self.last_target_box  = cand_box
+                self.last_target_conf = cand_conf
+            else:
+                self.missed_frames += 1
+                if self.missed_frames < self.reid_lost_frames and self.last_target_box is not None:
+                    target_box  = self.last_target_box
+                    target_conf = self.last_target_conf
+                else:
+                    target_box = None
 
         person_found = target_box is not None
 
@@ -880,6 +1036,10 @@ class PersonDetectorNode(Node):
             self.pub_bbox.publish(bbox_msg)
             self._maybe_update_dist_buffer(cx_norm, target_dist)
             self._update_cx_velocity(cx_norm)
+            # Remember which side the target is on (A) for the LOST sweep order.
+            # Ignore near-centered noise so the sign doesn't flicker.
+            if abs(cx_norm - 0.5) > 0.02:
+                self.last_seen_side = -1.0 if (cx_norm - 0.5) > 0 else 1.0
         else:
             cx_norm = 0.5   # unused but avoids unbound variable
             self._reset_cx_velocity()
@@ -918,25 +1078,27 @@ class PersonDetectorNode(Node):
             if person_found:
                 self._transition(State.TRACKING)
             elif self._elapsed() >= self.reverse_duration_s:
-                self._transition(State.LOST_TURNING_LEFT)
+                self._transition(State.LOST_SEARCH_FIRST)
             else:
                 twist_linear = -self.reverse_speed
 
-        elif self.state == State.LOST_TURNING_LEFT:
+        elif self.state == State.LOST_SEARCH_FIRST:
+            # Sweep toward the side the target was last seen on (A).
             if person_found:
                 self._transition(State.TRACKING)
             elif self._elapsed() >= self.search_turn_duration_s:
-                self._transition(State.LOST_TURNING_RIGHT)
+                self._transition(State.LOST_SEARCH_SECOND)
             else:
-                twist_angular = self.search_turn_speed
+                twist_angular = self.last_seen_side * self.search_turn_speed
 
-        elif self.state == State.LOST_TURNING_RIGHT:
+        elif self.state == State.LOST_SEARCH_SECOND:
+            # Then sweep the opposite side.
             if person_found:
                 self._transition(State.TRACKING)
             elif self._elapsed() >= self.search_turn_duration_s:
                 self._transition(State.LOST_STOPPED)
             else:
-                twist_angular = -self.search_turn_speed
+                twist_angular = -self.last_seen_side * self.search_turn_speed
 
         elif self.state == State.LOST_STOPPED:
             if person_found:

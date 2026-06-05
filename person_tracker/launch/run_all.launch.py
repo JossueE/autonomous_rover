@@ -16,7 +16,8 @@ def generate_launch_description():
         description='Modo de navegación: outdoor (rápido, exterior) o indoor (suave, laboratorio)',
     )
 
-    # 1. Kinect a 15fps para que YOLO+ReID puedan seguirle el paso
+    # 1. Kinect a 720P/30fps: menos ancho de banda USB y más frames para YOLO+ReID.
+    #    720P (1280x720) coincide con los intrínsecos usados para camera_hfov_deg=92.6.
     k4a_launch = Node(
         package='azure_kinect_ros2_driver',
         executable='azure_kinect_node',
@@ -25,8 +26,8 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[{
             'depth_mode': 'NFOV_2X2BINNED',
-            'color_resolution': '1536P',
-            'fps': 15,
+            'color_resolution': '720P',
+            'fps': 30,
         }],
     )
 
