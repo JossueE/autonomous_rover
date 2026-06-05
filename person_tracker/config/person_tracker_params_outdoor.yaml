@@ -19,10 +19,15 @@ person_tracker_node:
     reid_model: "osnet_ibn_x1_0"           # osnet_x0_25 | osnet_x0_5 | osnet_x1_0
     reid_similarity_threshold: 0.7      # cosine similarity to accept a match [0-1]
     reid_ema_alpha: 0.9                 # EMA weight for target embedding update
+    reid_reacquire_threshold: 0.55      # banda baja para re-enganchar (histéresis)
+    reid_lost_frames: 3                 # frames seguidos sin match antes de declarar pérdida
+    reid_every_n_frames: 2              # corre OSNet 1 de cada N frames (IoU entre medias) — baja carga
+    reid_iou_threshold: 0.3             # IoU para mantener el target en frames sin Re-ID
+    frame_timeout_s: 0.5                # si no llega frame RGB en este tiempo → stop de seguridad
 
     # ── TRACKING CONTROL ──────────────────────────────────────────────────
     target_distance_m: 1.1              # desired following distance (meters)
-    max_linear_speed: 1.75              # m/s
+    max_linear_speed: 1.75             # m/s
     max_angular_speed: 1.9              # rad/s (~109 deg/s) — +25% para giros más rápidos
     max_reverse_speed: 0.5              # m/s — cap aparte para la reversa (más suave que el avance)
     kp_linear: 1.2                     # bajado de 1.5 para reducir oscilación cerca del target
@@ -50,6 +55,7 @@ person_tracker_node:
     pivot_max_angular_speed: 1.9        # rad/s tope durante el pivote — +25%
     pivot_ramp_duration_s: 0.3          # ramp-up suave del giro (de 0 a tope)
     pivot_max_angle_rad: 2.5            # ~143°: si no encuentra a la persona, se da por perdido
+    pivot_max_duration_s: 4.0          # fallback temporal: rinde el pivote aunque la IMU calle
 
     # ── RAMPAS DE ACELERACIÓN / FRENADO (reactivas a la distancia) ─────────
     # Límite m/s² de cambio de velocidad por segundo. El "pico" se usa cuando
