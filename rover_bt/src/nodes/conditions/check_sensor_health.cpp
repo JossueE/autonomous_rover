@@ -2,6 +2,7 @@
 #include "rover_bt/shared_context.hpp"
 
 #include <cmath>
+#include <string>
 
 namespace rover_bt {
 
@@ -52,7 +53,15 @@ BT::NodeStatus CheckSensorHealth::tick() {
   } else if (name == "camera") {
     last = ctx->last_camera_time.load();
   } else if (name == "odom") {
-    last = ctx->last_odom_time.load();
+    if (ctx->rtabmap_odom_lost.load()) {
+      RCLCPP_WARN_THROTTLE(ctx->node->get_logger(), *ctx->node->get_clock(), 2000,
+                           "Sensor watchdog: RTAB-Map reports odometry lost");
+      return BT::NodeStatus::FAILURE;
+    }
+    last = ctx->last_rtabmap_odom_info_time.load();
+    if (last == 0.0) {
+      last = ctx->node_start_time.load();
+    }
   } else if (name == "imu") {
     last = ctx->last_imu_time.load();
   } else if (name == "motor") {

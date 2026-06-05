@@ -146,6 +146,14 @@ rviz2 -d install/autonomous_robot_simulation/share/autonomous_robot_simulation/r
 
 ### Notas Jossue 
 
+
+""" abrir TODO """
+
+ros2 run rover_bringup bringup_all_tui.sh --restart
+
+----------------------
+
+
 ros2 launch rover_bringup hardware_bringup.launch.py 
 
 ros2 launch rover_bringup k4a_rtabmap.launch.py mode:=localization

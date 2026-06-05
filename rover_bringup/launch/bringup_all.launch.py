@@ -68,7 +68,7 @@ def generate_launch_description():
     planner = TimerAction(period=8.0, actions=[
         _include(
             'path_planning_dynamic', 'planning.launch.py',
-            {'robot': robot, 'use_sim_time': 'False', 'rviz_config': nav_rviz},
+            {'robot': robot, 'use_sim_time': 'False', 'rviz_config': nav_rviz, 'log_level': 'warn'},
         ),
     ])
 
@@ -84,7 +84,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'rtabmap_mode', default_value='slam',
+            'rtabmap_mode', default_value='localization',
             choices=['localization', 'mapping', 'slam'],
             description='RTAB-Map mode: localization (existing map), mapping (fresh), slam (continue).'),
         DeclareLaunchArgument(

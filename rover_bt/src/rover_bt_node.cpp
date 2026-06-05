@@ -45,6 +45,7 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("tree_xml", "");
   this->declare_parameter("cmd_vel_topic", "/cmd_vel_safe");
   this->declare_parameter("odom_topic", "/odom");
+  this->declare_parameter("rtabmap_odom_info_topic", "/rtabmap/odom_info_lite");
   this->declare_parameter("amcl_pose_topic", "/amcl_robot_pose");
   this->declare_parameter("scan_topic", "/scan");
   this->declare_parameter("pointcloud_topic", "/k4a/points2");
@@ -185,6 +186,11 @@ void RoverBTNode::init_ros_interfaces() {
   auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     odom_topic, odom_qos, std::bind(&RoverBTNode::on_odom, this, std::placeholders::_1));
+
+  std::string rtabmap_odom_info_topic = this->get_parameter("rtabmap_odom_info_topic").as_string();
+  rtabmap_odom_info_sub_ = this->create_subscription<rtabmap_msgs::msg::OdomInfo>(
+    rtabmap_odom_info_topic, odom_qos,
+    std::bind(&RoverBTNode::on_rtabmap_odom_info, this, std::placeholders::_1));
 
   std::string amcl_pose_topic = this->get_parameter("amcl_pose_topic").as_string();
   amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
@@ -397,6 +403,20 @@ rover_bt::msg::SensorHealth make_health(
   }
   return h;
 }
+
+rover_bt::msg::SensorHealth make_rtabmap_odom_health(
+    double last_seen, double now, double timeout, bool lost) {
+  if (!lost) {
+    return make_health("odom", last_seen, now, timeout);
+  }
+
+  rover_bt::msg::SensorHealth h;
+  h.name = "odom";
+  h.status = rover_bt::msg::SensorHealth::STALE;
+  h.last_seen_ago = last_seen > 0.0 ? static_cast<float>(now - last_seen) : -1.0f;
+  h.detail = "rtabmap odometry lost";
+  return h;
+}
 }  // namespace
 
 void RoverBTNode::publish_status() {
@@ -438,8 +458,13 @@ void RoverBTNode::publish_status() {
 
   // Sensor health, using the same clock the watchdogs use.
   double now = this->get_clock()->now().seconds();
+  double odom_info_time = ctx_->last_rtabmap_odom_info_time.load();
+  if (odom_info_time == 0.0) {
+    odom_info_time = ctx_->node_start_time.load();
+  }
   msg.sensor_health.push_back(
-    make_health("odom",   ctx_->last_odom_time.load(),   now, odom_stale_timeout_));
+    make_rtabmap_odom_health(
+      odom_info_time, now, odom_stale_timeout_, ctx_->rtabmap_odom_lost.load()));
   if (monitor_lidar_) {
     msg.sensor_health.push_back(
       make_health("lidar",  ctx_->last_lidar_time.load(),  now, lidar_stale_timeout_));
@@ -488,6 +513,11 @@ void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
     ctx_->robot_theta.store(yaw);
   }
   ctx_->robot_linear_vel.store(msg->twist.twist.linear.x);
+}
+
+void RoverBTNode::on_rtabmap_odom_info(const rtabmap_msgs::msg::OdomInfo::SharedPtr msg) {
+  ctx_->last_rtabmap_odom_info_time.store(this->get_clock()->now().seconds());
+  ctx_->rtabmap_odom_lost.store(msg->lost);
 }
 
 void RoverBTNode::on_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {

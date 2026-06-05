@@ -52,7 +52,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'mode',
-            default_value='outdoor',
+            default_value='indoor',
             description='Modo de navegación: outdoor (rápido, exterior) o indoor (suave, laboratorio)',
         ),
         DeclareLaunchArgument(

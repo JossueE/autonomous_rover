@@ -32,7 +32,7 @@ def generate_launch_description():
 
     mode_arg = DeclareLaunchArgument(
         'mode',
-        default_value='outdoor',
+        default_value='indoor',
         description='Modo de navegación del detector: outdoor o indoor',
     )
 

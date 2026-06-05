@@ -38,6 +38,10 @@ struct SharedContext {
   std::atomic<double> last_lidar_time{0.0};
   std::atomic<double> last_camera_time{0.0};
   std::atomic<double> last_odom_time{0.0};
+  // RTAB-Map odometry health. /rtabmap/odom remains the pose/velocity source,
+  // while /rtabmap/odom_info_lite tells us if RTAB-Map has lost tracking.
+  std::atomic<double> last_rtabmap_odom_info_time{0.0};
+  std::atomic<bool> rtabmap_odom_lost{false};
   std::atomic<double> last_imu_time{0.0};
   // last_motor_time = last time EITHER wheel encoder topic was received.
   // Both robots (zlac706 / zlac8015d) publish wheel/left_data + wheel/right_data,

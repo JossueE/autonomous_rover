@@ -169,7 +169,8 @@ ros2 topic echo /rover_bt/status
 
 Fields: `mode`, `active_command_source`, `navigation_status`, `goal_distance`
 (metres, `-1` when no goal), `target_location`, `sensor_health[]` (per-sensor
-OK/STALE + seconds since last message), `is_mapping`, `mapping_mode`.
+OK/STALE + seconds since last signal; odom uses `/rtabmap/odom_info_lite`),
+`is_mapping`, `mapping_mode`.
 
 ---
 
@@ -180,7 +181,8 @@ OK/STALE + seconds since last message), `is_mapping`, `mapping_mode`.
 `rover_bt_node` ([src/rover_bt_node.cpp](src/rover_bt_node.cpp)) wires everything
 together:
 
-- **Subscriptions** keep timestamps + pose in a `SharedContext`: `/odom`,
+- **Subscriptions** keep timestamps + pose in a `SharedContext`: `/rtabmap/odom`
+  for pose/velocity, `/rtabmap/odom_info_lite` for RTAB-Map odom health,
   `/amcl_robot_pose` (map-frame pose, takes over from odom when present),
   `/scan` (lidar), pointcloud (`/k4a/points2` real, `/depth_camera/points` sim),
   `/imu/data`, `/sdv_trajectory` (planner heartbeat), `/rover_bt/commands`,
@@ -324,11 +326,14 @@ every tick and loop recovery forever.
 
 ## Sensor health & emergency stop
 
-Two tiers of watchdog, both comparing the last message stamp against `now()`:
+Two tiers of watchdog, comparing each sensor's last signal against `now()`:
 
 - **Critical — odom** (`odom_stale_timeout`, default 3 s): handled in the
-  Safety layer. If odom goes stale → `ZeroTwist`, mode `EMERGENCY`, TTS
-  "Odometría perdida". Restoring odom + a `resume` returns to IDLE.
+  Safety layer. It uses `/rtabmap/odom_info_lite`: `lost=true` fails
+  immediately, and a stale topic fails after the timeout. Staleness is measured
+  from when the BT receives `odom_info_lite`, not from the message
+  `header.stamp`. `/rtabmap/odom` is still used for pose/velocity, but not as
+  the e-stop health signal. Restoring odom + a `resume` returns to IDLE.
 - **Warn — lidar / camera / imu / motor** (`*_stale_timeout`, default 5 s):
   reported in `sensor_health[]` but do **not** stop the rover.
 
@@ -421,7 +426,8 @@ Unknown commands are safely discarded (the node stays alive).
 | `/rover_bt/status` | pub | `rover_bt/msg/RoverStatus` | 1 Hz state + sensor health |
 | `/cmd_vel_safe` | pub | `geometry_msgs/Twist` | velocity output |
 | `/rover_bt/commands` | sub | `rover_bt/msg/Command` | typed commands (e.g. from voice node) |
-| `/odom` | sub | `nav_msgs/Odometry` | **critical** for e-stop |
+| `/rtabmap/odom` | sub | `nav_msgs/Odometry` | pose/velocity source |
+| `/rtabmap/odom_info_lite` | sub | `rtabmap_msgs/OdomInfo` | **critical** RTAB-Map odom health |
 | `/amcl_robot_pose` | sub | `geometry_msgs/PoseWithCovarianceStamped` | map-frame pose (overrides odom) |
 | `/scan` | sub | `sensor_msgs/LaserScan` | lidar health |
 | pointcloud | sub | `sensor_msgs/PointCloud2` | camera health (`/k4a/points2` ‖ `/depth_camera/points`) |
@@ -468,7 +474,7 @@ Common situations and what they mean:
 | Symptom | Likely cause | Check / fix |
 |---|---|---|
 | Stuck in `EMERGENCY` immediately on boot, "Odometría perdida" spam | **Sim time not set** — sensor stamps (sim) vs wall-clock `now()` | Launch with `use_sim_time:=true` (sim launch does this). Confirm `/clock` is publishing and `use_sim_time` param is `true`. |
-| `EMERGENCY`, odom shows `stale by …` | odom genuinely stale / EKF dead | Check `/odom` is publishing fresh stamps; restart the localization/EKF node, then send `resume`. |
+| `EMERGENCY`, odom shows `stale by …` or `rtabmap odometry lost` | RTAB-Map odom lost or `/rtabmap/odom_info_lite` stopped | Check `/rtabmap/odom_info_lite --field lost`; `ros2 topic echo` warnings like `A message was lost!!!` are DDS drops, not `OdomInfo.lost`. Restore RTAB-Map odometry, then send `resume`. |
 | `/rover_bt/status` not publishing / not ~1 Hz | tree not ticking or node crashed | Check node is alive and `bt_tick_rate`; look for exceptions in node stdout. |
 | `navigate <x>` → "No conozco la ubicación x" | location not in registry | Confirm `x` exists in your waypoints file / lanelet map; in sim, `dynamic_waypoints_file` must point at the sim waypoints whose coords/lanelets match the map. |
 | `navigate` accepted but rover never moves, `goal_distance` static | planner/NMPC not producing a trajectory | Check the planner stack: is the `navigate_to_goal` action server up? Is `/sdv_trajectory` publishing? Do lanelet start/end names match the loaded map? rover_bt's job (send goal, track feedback) is done — the issue is downstream. |

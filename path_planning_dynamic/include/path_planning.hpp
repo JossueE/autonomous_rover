@@ -274,7 +274,7 @@ private:
     bool has_wp1_ = false;
     bool has_wp2_ = false;
 
-    double W_WP1 = 2.0;    // weight for distance to prio-1 path; higher keeps paths near centerline
+    double W_WP1 = 2.2;    // weight for distance to prio-1 path; higher keeps paths near centerline
     double W_WP2 = 0.4;    // weight for distance to prio-2 path; lower avoids pulling toward adjacent edges
     double WP_STROKE_RADIUS_CELLS = 2.0; // thickness when rasterizing lines
 
