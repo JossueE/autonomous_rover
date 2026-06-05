@@ -409,38 +409,30 @@ void RoverBTNode::on_command(const rover_bt::msg::Command::SharedPtr msg) {
 }
 
 void RoverBTNode::on_joy(const sensor_msgs::msg::Joy::SharedPtr msg) {
-  // button 4 (L1) or 5 (R1) as deadman switch — nothing happens unless held.
-  const bool deadman = msg->buttons.size() > 5 &&
-                       (msg->buttons[4] == 1 || msg->buttons[5] == 1);
-  if (!deadman) {
-    return;
+  // Mark the joystick as active whenever the operator is doing something:
+  // any button pressed or either stick deflected beyond the threshold.
+  // teleop_joycon owns velocity publishing and its own deadman gating;
+  // the BT only needs to know the joycon is in use to trigger JoyconOverlay.
+  const bool any_button = std::any_of(msg->buttons.begin(), msg->buttons.end(),
+                                      [](int b) { return b == 1; });
+  const bool stick_moved = (msg->axes.size() > 1 && std::abs(msg->axes[1]) > 0.2) ||
+                           (msg->axes.size() > 3 && std::abs(msg->axes[3]) > 0.2);
+  if (any_button || stick_moved) {
+    ctx_->last_joy_active_time.store(this->now().seconds());
   }
-
-  // Mark the joystick as active. The behavior tree's JoyconOverlay uses this
-  // (via CheckJoyActive) to switch into TELEOP_JOYCON automatically while the
-  // deadman is held, and back to IDLE shortly after it is released — joycon
-  // teleop is detected, never a voice command.
-  ctx_->last_joy_active_time.store(this->now().seconds());
 
   rover_bt::msg::Command cmd;
   cmd.stamp = this->now();
   cmd.source = "joycon";
-  cmd.priority = 1;  // Priority 1 for joycon commands.
+  cmd.priority = 1;
 
-  // Stop command mapped to button 0 (A or Cross)
+  // Button 0 (A / Cross) → stop; Button 3 (Y / Triangle) → switch to autonomous.
   if (msg->buttons.size() > 0 && msg->buttons[0] == 1) {
     cmd.command = "stop";
     arbitrator_->enqueue(cmd);
-  } else if (msg->buttons.size() > 3 && msg->buttons[3] == 1) { // Button Y or Triangle
+  } else if (msg->buttons.size() > 3 && msg->buttons[3] == 1) {
     cmd.command = "autonomous";
     arbitrator_->enqueue(cmd);
-  } else if (msg->axes.size() > 3 &&
-             (std::abs(msg->axes[1]) > 0.2 || std::abs(msg->axes[3]) > 0.2)) {
-    // Publishes direct cmd_vel velocities while the stick is deflected.
-    geometry_msgs::msg::Twist twist;
-    twist.linear.x = msg->axes[1] * 0.4;  // Scale velocities
-    twist.angular.z = msg->axes[3] * 0.6;
-    cmd_vel_pub_->publish(twist);
   }
 }
 

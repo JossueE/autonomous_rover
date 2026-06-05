@@ -80,9 +80,31 @@ def _launch_setup(context, *args, **kwargs):
         }]
     )
 
+    joy_node = Node(
+        package='joy',
+        executable='joy_node',
+        name='joy_node',
+        output='screen',
+        parameters=[{
+            'device_id': 0,
+            'autorepeat_rate': 20.0,
+        }],
+        ros_arguments=['--log-level', log_level],
+    )
+
+    teleop_joycon_node = Node(
+        package='teleop',
+        executable='teleop_joycon',
+        name='teleop_joycon',
+        output='screen',
+        ros_arguments=['--log-level', log_level],
+    )
+
     return [
         LogInfo(msg=f'Starting rover hardware profile: {robot_name}'),
         robot_state_publisher_launch,
+        joy_node,
+        teleop_joycon_node,
         twist_mux_node,
         wheels_driver_node,
     ]
