@@ -26,8 +26,8 @@ person_tracker_node:
     max_angular_speed: 1.8              # subido (era 1.6) — más techo para que las vueltas terminen un poco antes
     max_reverse_speed: 0.25             # reversa muy suave en interiores
     kp_linear: 0.6                      # menos reactivo (evita oscilación)
-    kp_angular: 2.8                     # bajado (era 2.8) — giros menos bruscos / menos oscilación
-    kd_angular: 1.6                     # bajado (era 1.6) — corrección más suave, menos tirones
+    kp_angular: 2.8
+    kd_angular: 1.6
     cx_velocity_ema_alpha: 0.6          # más suavizado (era 0.5) — reacción angular más suave
     centering_deadzone: 0.05
     centering_suppress_linear_zone: 0.45
