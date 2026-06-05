@@ -66,6 +66,7 @@ def launch_setup(context, *args, **kwargs):
     package_path = get_package_share_directory('path_planning_dynamic')
     paramsConfig = os.path.join(package_path, 'config', 'params.yaml')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    log_level = LaunchConfiguration('log_level')
     map_path = resolve_map_path(
         profile['map_path'],
         package_path,
@@ -79,6 +80,7 @@ def launch_setup(context, *args, **kwargs):
         executable='path_planning_node',
         name='path_planning_node',
         output='screen',
+        arguments=['--ros-args', '--log-level', log_level],
         parameters=[paramsConfig, {'map_path': map_path, 'use_sim_time': use_sim_time}],
         additional_env={'RCUTILS_CONSOLE_OUTPUT_FORMAT': "{message}"}
     )
@@ -88,6 +90,7 @@ def launch_setup(context, *args, **kwargs):
         executable='pointcloud_clustering_node',
         name='pointcloud_clustering_node',
         output='screen',
+        arguments=['--ros-args', '--log-level', log_level],
         parameters=[paramsConfig, {'use_sim_time': use_sim_time}],
         additional_env={'RCUTILS_CONSOLE_OUTPUT_FORMAT': "{message}"}
     )
@@ -97,6 +100,7 @@ def launch_setup(context, *args, **kwargs):
         executable='pointcloud_roi_node',
         name='pointcloud_roi_node',
         output='screen',
+        arguments=['--ros-args', '--log-level', log_level],
         parameters=[paramsConfig, {'roi_max_y_': roi_max_y, 'use_sim_time': use_sim_time}],
         additional_env={'RCUTILS_CONSOLE_OUTPUT_FORMAT': "{message}"}
     )
@@ -134,6 +138,12 @@ def generate_launch_description():
         description='Path to rviz config file'
     )
 
+    log_level_arg = DeclareLaunchArgument(
+        'log_level',
+        default_value='warn',
+        description='Log level for path planner nodes (debug|info|warn|error).'
+    )
+
     robot_arg = DeclareLaunchArgument(
         'robot',
         default_value='zlac706',
@@ -145,5 +155,6 @@ def generate_launch_description():
         robot_arg,
         simu_time,
         rviz_arg,
+        log_level_arg,
         OpaqueFunction(function=launch_setup),
     ])

@@ -19,6 +19,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(rtabmap_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
@@ -93,6 +94,7 @@ set(ROVER_BT_DEPS
   nav_msgs
   std_msgs
   sensor_msgs
+  rtabmap_msgs
   tf2_ros
   tf2_geometry_msgs
   ament_index_cpp

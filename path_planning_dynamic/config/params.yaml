@@ -3,7 +3,7 @@ path_planning_node:
     kinematics.model: "differential"     # Selectable model: ackermann or differential.
     vehicle.axle_to_front: 0.20      # Distance from robot center to the front footprint using the minibase chassis length (0.55 m).
     vehicle.axle_to_back: 0.20       # Distance from robot center to the rear footprint using the minibase chassis length (0.55 m).
-    vehicle.width: 0.30              # Total vehicle width including wheel thickness and separation from the minibase URDF.
+    vehicle.width: 0.25              # Total vehicle width including wheel thickness and separation from the minibase URDF.
     planner.segment_steps: 5          # Number of rollout samples per motion primitive.
     planner.sample_distance: 0.05     # Distance advanced per rollout sample for forward primitives (m).
     planner.square_size_m: 1.5        # Side length of the local planning window used for local occupancy reconstruction (m).

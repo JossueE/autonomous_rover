@@ -282,7 +282,7 @@ class VoiceCommandNode(Node):
         self._speaking = threading.Event()
 
         self.waypoint_names = self._load_waypoints(self.get_parameter("waypoints_file").value)
-        self.get_logger().info(f"Waypoints vocabulary: {self.waypoint_names}")
+        self.get_logger().info(f"[voice] Waypoints vocabulary: {self.waypoint_names}")
 
         loader = LoadModel()
         wake_model = loader.ensure_model("wake_word")[0]
@@ -302,6 +302,9 @@ class VoiceCommandNode(Node):
             variants=self.wake_variants,
             listen_seconds=self.wake_timeout,
             sample_rate=audio_sample_rate,
+        )
+        self.wake_detector.on_say = (
+            lambda text: self.get_logger().info(f"[wake_word] {text}")
         )
         self.stt = SpeechToText(str(stt_model), model_name=self.stt_model_name)
         self.tts = TTS(str(tts_models[0]), str(tts_models[1]))
@@ -329,7 +332,7 @@ class VoiceCommandNode(Node):
         self.audio_thread.start()
 
         self.get_logger().info(
-            f"Voice bridge ready - say '{self.wake_word}' to activate."
+            f"[voice] Voice bridge ready - say '{self.wake_word}' to activate."
         )
 
     def destroy_node(self):
@@ -361,7 +364,7 @@ class VoiceCommandNode(Node):
     def _speak(self, text: str):
         self._speaking.set()
         try:
-            self.get_logger().info(f"[TTS] {text}")
+            self.get_logger().info(f"[tts] {text}")
             audio = self.tts.synthesize(text)
             self.tts.play_audio_with_amplitude(audio)
         except Exception as exc:
@@ -391,6 +394,7 @@ class VoiceCommandNode(Node):
                 frame = self.audio_listener.read_frame(self.wake_detector.frame_samples)
                 audio = self.wake_detector.wake_word_detector(frame)
                 if audio is not None:
+                    self.get_logger().info("[wake_word] audio captured; sending to STT")
                     self._process_audio(audio)
         except Exception as exc:
             self.get_logger().error(f"Audio bridge crashed: {exc}")
@@ -401,19 +405,21 @@ class VoiceCommandNode(Node):
                 pass
 
     def _process_audio(self, audio: bytes):
+        self.get_logger().info("[stt] transcribing captured speech")
         text = self.stt.worker_loop(audio)
         if not text:
+            self.get_logger().info("[stt] empty transcription")
             return
 
         text = strip_wake_words(text, self.wake_variants)
-        self.get_logger().info(f"[voice] heard: '{text}'")
+        self.get_logger().info(f"[stt] heard: '{text}'")
         cmd, target = parse_speech_command(text, self.waypoint_names)
 
         if cmd:
             self._publish(cmd, target)
             return
 
-        self.get_logger().info("No command matched; wake word required again.")
+        self.get_logger().info("[voice] No command matched; wake word required again.")
 
     def _publish(self, command: str, target: Optional[str] = None):
         msg = Command()
@@ -426,7 +432,7 @@ class VoiceCommandNode(Node):
         msg.target = target if target else ""
         self.cmd_pub.publish(msg)
         self.get_logger().info(
-            f"Command published: '{command}'" + (f" -> '{target}'" if target else "")
+            f"[voice] Command published: '{command}'" + (f" -> '{target}'" if target else "")
         )
 
 

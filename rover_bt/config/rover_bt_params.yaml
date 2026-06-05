@@ -10,6 +10,7 @@ rover_bt_node:
     # ── Topics ──
     cmd_vel_topic: "/cmd_vel_safe"
     odom_topic: "/rtabmap/odom"
+    rtabmap_odom_info_topic: "/rtabmap/odom_info_lite"
     amcl_pose_topic: "/amcl_robot_pose"
     scan_topic: "/scan"
     pointcloud_topic: "/k4a/points2"

@@ -4,7 +4,6 @@
 #include <pcl/search/kdtree.h>
 #include <pcl/segmentation/extract_clusters.h>
 
-#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -68,10 +67,7 @@ namespace lidar_obstacle_detector
     ObstacleDetector<PointT>::clustering(const typename pcl::PointCloud<PointT>::ConstPtr &cloud, const float cluster_tolerance, const int min_size, const int max_size)
     {
         if (!cloud) {
-            std::cout << "[clustering] ⚠ Nube recibida es NULL\n";
             return {};
-        } else {
-            std::cout << "[clustering] Nube recibida con " << cloud->size() << " puntos\n";
         }
 
 
@@ -105,8 +101,6 @@ namespace lidar_obstacle_detector
             cluster->height = 1;
             cluster->is_dense = true;
             clusters.push_back(cluster);
-            std::cout << "CLuster Points:" << cluster->points.size() << " puntos\n";
-
         }
 
         return clusters;

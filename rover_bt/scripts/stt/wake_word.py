@@ -42,7 +42,7 @@ class WakeWord:
         if self.wake_word not in self.variants:
             self.variants.insert(0, self.wake_word)
 
-        self.on_say = (lambda s: print(f"[Wake_word] {s}"))
+        self.on_say = (lambda s: print(f"[wake_word] {s}"))
 
         grammar = json.dumps(self.variants, ensure_ascii=False)
         self.model = vosk.Model(model_path)
@@ -110,7 +110,7 @@ class WakeWord:
                 if not self.listening_confirm:
                     self.listening_confirm = True
                     self.listening = True
-                    print("Confirmo Grabación")
+                    self.on_say("Confirmo grabacion")
                 self.partial_hits = 0
                 return
             self.partial_hits = 0
@@ -122,7 +122,7 @@ class WakeWord:
                     if not self.listening:
                         self.listening = True
                         send_mode_sync(mode = "USER", as_json=False) if AVATAR else None
-                        print("Empiezo a Grabar (primer partial)")
+                        self.on_say("Empiezo a grabar (primer partial)")
                         drained = self.buffer_add(frame) if flag else None
                         if drained is not None:
                             return drained
@@ -150,7 +150,7 @@ class WakeWord:
     def buffer_clear(self, silent: bool = False) -> None:
         """Clear the audio buffer and reset flags."""
         if not silent:
-            print("Limpiando Buffer")
+            self.on_say("Limpiando buffer")
         self.listening = False
         self.listening_confirm = False
         with self.lock:
@@ -165,7 +165,7 @@ class WakeWord:
             data = b"".join(self.buffer)
             self.buffer.clear()
 
-        print("Limpio el Buffer")
+        self.on_say("Limpio el buffer")
         self.size = 0
         self.listening = False
         self.listening_confirm = False

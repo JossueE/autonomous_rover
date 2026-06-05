@@ -27,6 +27,7 @@
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>rtabmap_msgs</depend>
 
   <!-- TF2 -->
   <depend>tf2_ros</depend>

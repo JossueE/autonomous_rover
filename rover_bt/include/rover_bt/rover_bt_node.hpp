@@ -20,6 +20,7 @@
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <rtabmap_msgs/msg/odom_info.hpp>
 
 #include "rover_bt/msg/command.hpp"
 #include "rover_bt/msg/rover_status.hpp"
@@ -50,6 +51,7 @@ private:
   void on_laser_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg);
   void on_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void on_odom(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void on_rtabmap_odom_info(const rtabmap_msgs::msg::OdomInfo::SharedPtr msg);
   void on_imu(const sensor_msgs::msg::Imu::SharedPtr msg);
   void on_wheel_data(const std_msgs::msg::Float64::SharedPtr msg);
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
@@ -92,6 +94,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr camera_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<rtabmap_msgs::msg::OdomInfo>::SharedPtr rtabmap_odom_info_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
   // Both robots' wheel drivers publish wheel/left_data + wheel/right_data; a
   // message on either updates the motor/wheel liveness timestamp.

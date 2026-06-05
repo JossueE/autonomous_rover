@@ -39,7 +39,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'person_tracker_mode',
-            default_value='outdoor',
+            default_value='indoor',
             description='Initial person_tracker tuning profile: outdoor or indoor '
                         '(switchable live via the person_track command target).'),
 
