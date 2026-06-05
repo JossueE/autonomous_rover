@@ -70,10 +70,23 @@ All timings are configurable in the YAML file.
 
 | Topic | Type | Description |
 |---|---|---|
-| `/cmd_vel_safe` | `geometry_msgs/Twist` | Velocity commands to the rover motor driver |
+| `/cmd_vel_person` | `geometry_msgs/Twist` | Velocity commands (param `cmd_vel_topic`; mux'd below `/cmd_vel_safe`) |
 | `/person_tracker/person_detected` | `std_msgs/Bool` | `true` when the target is visible |
 | `/person_tracker/person_bbox` | `std_msgs/Float32MultiArray` | `[x1, y1, x2, y2, conf, cx_norm, cy_norm]` |
 | `/person_tracker/detections_image` | `sensor_msgs/Image` | Annotated debug image |
+| `/person_tracker/status` | `std_msgs/String` | Coarse FSM state for supervisors (`SEARCHING`/`TRACKING`/`LOST_RECOVERING`/`LOST_STOPPED`/`DISABLED`) |
+
+### Control (rover_bt integration)
+
+| Topic | Type | Description |
+|---|---|---|
+| `/person_tracker/enable` | `std_msgs/Bool` (sub) | Gate. While `false` the node runs **no** inference and publishes **nothing**; each `true` re-locks onto a fresh target (`lock_on`, default `nearest`). |
+| `/person_tracker/profile` | `std_msgs/String` (sub) | Live tuning-profile switch: `indoor` / `outdoor` (needs `params_indoor_file` / `params_outdoor_file`). |
+
+> **Standalone use is unchanged**: `start_enabled` defaults to `true`, so the
+> launchers above follow immediately without a supervisor. `rover_bt` launches it
+> with `start_enabled:=false` and drives `/person_tracker/enable` from its
+> `PERSON_TRACK` mode.
 
 ---
 

@@ -10,6 +10,7 @@
 #include "rover_bt/nodes/conditions/check_nav_status.hpp"
 #include "rover_bt/nodes/conditions/check_flag.hpp"
 #include "rover_bt/nodes/conditions/check_joy_active.hpp"
+#include "rover_bt/nodes/conditions/check_person_event.hpp"
 
 #include "rover_bt/nodes/actions/navigate_to_goal.hpp"
 #include "rover_bt/nodes/actions/zero_twist.hpp"
@@ -25,6 +26,9 @@
 #include "rover_bt/nodes/actions/increment_patrol_index.hpp"
 #include "rover_bt/nodes/actions/save_location.hpp"
 #include "rover_bt/nodes/actions/process_command.hpp"
+#include "rover_bt/nodes/actions/set_person_profile.hpp"
+
+#include <behaviortree_cpp/controls/switch_node.h>
 
 namespace rover_bt {
 
@@ -63,6 +67,11 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("command_topic", "/rover_bt/commands");
   this->declare_parameter("joy_topic", "/joy");
   this->declare_parameter("status_topic", "/rover_bt/status");
+  // Person-tracker (person_tracker package) integration. The BT enables the
+  // follower only in PERSON_TRACK and reads its coarse FSM state for speech.
+  this->declare_parameter("person_enable_topic", "/person_tracker/enable");
+  this->declare_parameter("person_profile_topic", "/person_tracker/profile");
+  this->declare_parameter("person_status_topic", "/person_tracker/status");
   this->declare_parameter("amcl_pose_timeout", 2.0);
   this->declare_parameter("goal_timeout", 30.0);
   this->declare_parameter("planner_heartbeat_timeout", 10.0);
@@ -160,6 +169,17 @@ void RoverBTNode::init_ros_interfaces() {
   std::string status_topic = this->get_parameter("status_topic").as_string();
   status_pub_ = this->create_publisher<rover_bt::msg::RoverStatus>(status_topic, 10);
 
+  // Person-tracker control. enable/profile latch (TRANSIENT_LOCAL) so the
+  // tracker gets the current state even if it subscribes after us.
+  auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+  std::string person_enable_topic = this->get_parameter("person_enable_topic").as_string();
+  person_enable_pub_ = this->create_publisher<std_msgs::msg::Bool>(person_enable_topic, latched_qos);
+  ctx_->person_enable_pub = person_enable_pub_;
+
+  std::string person_profile_topic = this->get_parameter("person_profile_topic").as_string();
+  person_profile_pub_ = this->create_publisher<std_msgs::msg::String>(person_profile_topic, latched_qos);
+  ctx_->person_profile_pub = person_profile_pub_;
+
   // Subscribers
   std::string odom_topic = this->get_parameter("odom_topic").as_string();
   auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
@@ -204,6 +224,12 @@ void RoverBTNode::init_ros_interfaces() {
   joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
     joy_topic, 10, std::bind(&RoverBTNode::on_joy, this, std::placeholders::_1));
 
+  // Person-tracker coarse state (latched to match the tracker's publisher).
+  std::string person_status_topic = this->get_parameter("person_status_topic").as_string();
+  person_status_sub_ = this->create_subscription<std_msgs::msg::String>(
+    person_status_topic, latched_qos,
+    std::bind(&RoverBTNode::on_person_status, this, std::placeholders::_1));
+
   // Services
   send_command_srv_ = this->create_service<rover_bt::srv::SendCommand>(
     "/rover_bt/send_command", std::bind(&RoverBTNode::handle_send_command, this, std::placeholders::_1, std::placeholders::_2));
@@ -220,6 +246,11 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<CheckNavStatus>("CheckNavStatus");
   factory_.registerNodeType<CheckFlag>("CheckFlag");
   factory_.registerNodeType<CheckJoyActive>("CheckJoyActive");
+  factory_.registerNodeType<CheckPersonEvent>("CheckPersonEvent");
+
+  // BehaviorTree.CPP registers Switch2..Switch6 by default; the mode dispatch
+  // needs a 7th case (PERSON_TRACK), so register Switch7 explicitly.
+  factory_.registerNodeType<BT::SwitchNode<7>>("Switch7");
 
   // Register actions
   factory_.registerNodeType<NavigateToGoal>("NavigateToGoal");
@@ -236,6 +267,7 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<IncrementPatrolIndex>("IncrementPatrolIndex");
   factory_.registerNodeType<SaveLocation>("SaveLocation");
   factory_.registerNodeType<ProcessCommand>("ProcessCommand");
+  factory_.registerNodeType<SetPersonProfile>("SetPersonProfile");
 
   // Load XML
   std::string xml_path = this->get_parameter("tree_xml").as_string();
@@ -284,6 +316,35 @@ void RoverBTNode::init_behavior_tree() {
 void RoverBTNode::tick_tree() {
   // Tick tree exactly once
   tree_.tickExactlyOnce();
+
+  // Drive the person-tracker enable from the (single source of truth) mode every
+  // tick: the follower runs only in PERSON_TRACK, so any exit — including an
+  // emergency forcing mode=EMERGENCY in the Safety layer — silences it within
+  // one tick (100 ms), before the BT's ZeroTwist on /cmd_vel_safe goes stale.
+  if (person_enable_pub_) {
+    std::string mode = "IDLE";
+    (void)tree_.rootBlackboard()->get("mode", mode);
+    std_msgs::msg::Bool en;
+    en.data = (mode == "PERSON_TRACK");
+    person_enable_pub_->publish(en);
+  }
+}
+
+void RoverBTNode::on_person_status(const std_msgs::msg::String::SharedPtr msg) {
+  const std::string& state = msg->data;
+  const std::string& prev = last_person_state_;
+
+  // The follower just gave up (reached LOST_STOPPED): tell the BT to speak once.
+  if (state == "LOST_STOPPED" && prev != "LOST_STOPPED") {
+    ctx_->person_lost_event.store(true);
+  }
+  // Re-acquired the person after having lost it: speak the "found" line once.
+  const bool was_lost = (prev == "LOST_STOPPED" || prev == "LOST_RECOVERING");
+  if (state == "TRACKING" && was_lost) {
+    ctx_->person_found_event.store(true);
+  }
+
+  last_person_state_ = state;
 }
 
 namespace {

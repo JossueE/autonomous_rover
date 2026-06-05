@@ -140,10 +140,11 @@
       <!-- ════════════════════════════════════════════════════ -->
       <!-- LAYER 5: MODE DISPATCH                              -->
       <!-- ════════════════════════════════════════════════════ -->
-      <Switch6 name="ModeDispatch" variable="{mode}"
+      <Switch7 name="ModeDispatch" variable="{mode}"
                case_1="EMERGENCY"      case_2="TELEOP_VOICE"
                case_3="TELEOP_JOYCON"  case_4="AUTONOMOUS"
-               case_5="PATROL"         case_6="IDLE">
+               case_5="PATROL"         case_6="IDLE"
+               case_7="PERSON_TRACK">
 
         <!-- === EMERGENCY MODE === -->
         <Fallback name="EmergencyMode">
@@ -196,9 +197,12 @@
         <!-- === IDLE MODE === -->
         <SubTree ID="IdleSubtree" _autoremap="true"/>
 
-        <!-- Switch6 default: unknown/unimplemented mode → reset to IDLE -->
+        <!-- === PERSON_TRACK MODE === -->
+        <SubTree ID="PersonTrackSubtree" _autoremap="true"/>
+
+        <!-- Switch7 default: unknown/unimplemented mode → reset to IDLE -->
         <SetMode mode="IDLE"/>
-      </Switch6>
+      </Switch7>
     </ReactiveSequence>
   </BehaviorTree>
 
@@ -351,6 +355,9 @@
            operator uses the joystick — there is no voice/command entry. -->
       <Sequence name="EnterPersonTrack">
         <CheckCommand expected="person_track"/>
+        <!-- target (if any) selects the indoor/outdoor tuning profile; empty
+             keeps the tracker's current profile. -->
+        <SetPersonProfile profile="{target_location}"/>
         <SetMode mode="PERSON_TRACK"/>
         <Speak message="Modo seguimiento de persona."/>
         <ClearCommand/>
@@ -384,6 +391,7 @@
       <!-- No voice transition to joycon: it is entered by using the stick. -->
       <Sequence name="VoiceToPersonTrack">
         <CheckCommand expected="person_track"/>
+        <SetPersonProfile profile="{target_location}"/>
         <SetMode mode="PERSON_TRACK"/>
         <Speak message="Modo seguimiento de persona."/>
         <ClearCommand/>
@@ -431,5 +439,60 @@
       </Sequence>
       <ClearCommand name="DiscardInVoice"/>
     </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Person Track (follow-me)                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    The actual following is done by the person_tracker node, which publishes to
+    /cmd_vel_person while enabled. rover_bt drives /person_tracker/enable from
+    {mode} every tick (enabled only here), and the twist mux routes the tracker's
+    velocity to the wheels with LOWER priority than the BT's /cmd_vel_safe — so
+    Safety/odom e-stops still override instantly.
+
+    This subtree is a ReactiveFallback (guards re-checked every tick):
+      - stop / autonomous → leave the mode (disables the tracker on the next tick)
+      - person_track again → live-switch the indoor/outdoor profile, stay in mode
+      - lost / found edges → speak once (tracker keeps searching; we stay in mode)
+      - default → hold the mode (AlwaysSuccess); the tracker is driving.
+  -->
+  <BehaviorTree ID="PersonTrackSubtree">
+    <ReactiveFallback name="PersonTrackMode">
+      <!-- Exit the mode on stop or an autonomous request. -->
+      <Sequence name="PersonTrackExit">
+        <Fallback name="ExitCommand">
+          <CheckCommand expected="stop"/>
+          <CheckCommand expected="autonomous"/>
+        </Fallback>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Seguimiento de persona detenido."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Re-issuing person_track while tracking switches the tuning profile. -->
+      <Sequence name="PersonTrackSwitchProfile">
+        <CheckCommand expected="person_track"/>
+        <SetPersonProfile profile="{target_location}"/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- The follower gave up (LOST_STOPPED): announce + ask the person back.
+           We stay in PERSON_TRACK; the tracker keeps watching to re-acquire. -->
+      <Sequence name="AnnouncePersonLost">
+        <CheckPersonEvent event="lost"/>
+        <Speak message="Perdí a la persona. Por favor regresa, aquí te espero."/>
+      </Sequence>
+
+      <!-- Re-acquired after being lost. -->
+      <Sequence name="AnnouncePersonFound">
+        <CheckPersonEvent event="found"/>
+        <Speak message="Te encontré. Continuamos."/>
+      </Sequence>
+
+      <!-- Default: hold the mode; the person_tracker node is driving. -->
+      <AlwaysSuccess name="PersonTrackHold"/>
+    </ReactiveFallback>
   </BehaviorTree>
 </root>

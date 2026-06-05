@@ -79,6 +79,7 @@ def _launch_setup(context, *args, **kwargs):
         ros_arguments=['--log-level', log_level],
         parameters=[{
             'high_topic': '/cmd_vel_safe',
+            'person_topic': '/cmd_vel_person',
             'low_topic': '/cmd_vel_nav',
             'output_topic': '/cmd_vel'
         }]

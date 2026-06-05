@@ -16,8 +16,12 @@ def launch_setup(context, *args, **kwargs):
             f"Modo inválido: '{mode}'. Opciones: {', '.join(VALID_MODES)}"
         )
 
+    start_enabled = LaunchConfiguration('start_enabled').perform(context)
+
     pkg_dir = get_package_share_directory('person_tracker')
     config_file = os.path.join(pkg_dir, 'config', f'person_tracker_params_{mode}.yaml')
+    indoor_file = os.path.join(pkg_dir, 'config', 'person_tracker_params_indoor.yaml')
+    outdoor_file = os.path.join(pkg_dir, 'config', 'person_tracker_params_outdoor.yaml')
 
     if not os.path.isfile(config_file):
         raise RuntimeError(f"No existe el archivo de parámetros: {config_file}")
@@ -29,7 +33,17 @@ def launch_setup(context, *args, **kwargs):
             executable='person_tracker_node',
             name='person_tracker_node',
             output='screen',
-            parameters=[config_file],
+            # Base profile YAML first, then overrides so the indoor/outdoor files
+            # are known to the node for live /person_tracker/profile switching and
+            # start_enabled reflects whether a supervisor (rover_bt) drives it.
+            parameters=[
+                config_file,
+                {
+                    'params_indoor_file': indoor_file,
+                    'params_outdoor_file': outdoor_file,
+                    'start_enabled': start_enabled.lower() in ('true', '1'),
+                },
+            ],
         ),
     ]
 
@@ -40,6 +54,12 @@ def generate_launch_description():
             'mode',
             default_value='outdoor',
             description='Modo de navegación: outdoor (rápido, exterior) o indoor (suave, laboratorio)',
+        ),
+        DeclareLaunchArgument(
+            'start_enabled',
+            default_value='true',
+            description='Si arranca siguiendo de inmediato (true) o esperando la '
+                        'señal /person_tracker/enable de rover_bt (false)',
         ),
         OpaqueFunction(function=launch_setup),
     ])

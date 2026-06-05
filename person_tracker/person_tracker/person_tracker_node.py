@@ -13,13 +13,14 @@ import time
 from collections import deque
 import numpy as np
 import cv2
+import yaml
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from sensor_msgs.msg import Image, CameraInfo, Imu
-from std_msgs.msg import Bool, Float32MultiArray
+from std_msgs.msg import Bool, Float32MultiArray, String
 from geometry_msgs.msg import Twist
 from ultralytics import YOLO
 
@@ -140,6 +141,27 @@ class PersonDetectorNode(Node):
         self.declare_parameter('reid_every_n_frames',           1)    # 1 = OSNet every frame; >1 = IoU between
         self.declare_parameter('reid_iou_threshold',            0.3)  # IoU to keep the target on non-Re-ID frames
         self.declare_parameter('frame_timeout_s',               0.5)  # stop the robot if no RGB frame for this long
+        # Integration with rover_bt: the BT owns the rover's mode and drives the
+        # tracker via /person_tracker/enable. The tracker publishes its velocity
+        # on a DEDICATED topic (default /cmd_vel_person) that a twist mux selects
+        # only while the BT is in PERSON_TRACK — so the BT keeps the single
+        # /cmd_vel_safe publisher and full emergency override authority. While
+        # disabled the node runs NO inference and publishes NOTHING (so it never
+        # backpressures the GPU or fights navigation on the mux). On each enable
+        # it re-locks onto a fresh target (see lock_on).
+        self.declare_parameter('cmd_vel_topic',                 '/cmd_vel_person')
+        self.declare_parameter('enable_topic',                  '/person_tracker/enable')
+        self.declare_parameter('status_topic',                  '/person_tracker/status')
+        self.declare_parameter('profile_topic',                 '/person_tracker/profile')
+        self.declare_parameter('start_enabled',                 True)   # rover_bt launch sets False
+        # Which detection to lock onto when (re)acquiring a target. 'nearest' =
+        # closest person by depth (whoever stepped in front to be followed),
+        # 'largest' = biggest bounding box, 'confidence' = highest YOLO score.
+        self.declare_parameter('lock_on',                       'nearest')
+        # Optional paths to the indoor/outdoor parameter YAMLs, so the active
+        # tuning profile can be switched live via /person_tracker/profile.
+        self.declare_parameter('params_indoor_file',            '')
+        self.declare_parameter('params_outdoor_file',           '')
 
         p = self.get_parameter
         model_path          = str(p('model_path').value)
@@ -215,6 +237,17 @@ class PersonDetectorNode(Node):
         self.reid_every_n               = max(1, int(p('reid_every_n_frames').value))
         self.reid_iou_threshold         = float(p('reid_iou_threshold').value)
         self.frame_timeout_s            = float(p('frame_timeout_s').value)
+
+        cmd_vel_topic        = str(p('cmd_vel_topic').value)
+        enable_topic         = str(p('enable_topic').value)
+        status_topic         = str(p('status_topic').value)
+        profile_topic        = str(p('profile_topic').value)
+        self.enabled         = bool(p('start_enabled').value)
+        self.lock_on         = str(p('lock_on').value).lower()
+        self.params_indoor_file  = str(p('params_indoor_file').value)
+        self.params_outdoor_file = str(p('params_outdoor_file').value)
+        # Coarse state last announced on /person_tracker/status (dedupe re-publishes).
+        self._last_published_status: str | None = None
 
         # ------------------------------------------------------------------ #
         # YOLO
@@ -349,11 +382,36 @@ class PersonDetectorNode(Node):
         # ------------------------------------------------------------------ #
         # Publishers
         # ------------------------------------------------------------------ #
-        self.pub_cmd_vel  = self.create_publisher(Twist,              '/cmd_vel_safe',                        10)
+        self.pub_cmd_vel  = self.create_publisher(Twist,              cmd_vel_topic,                          10)
         self.pub_detected = self.create_publisher(Bool,               '/person_tracker/person_detected',     10)
         self.pub_bbox     = self.create_publisher(Float32MultiArray,   '/person_tracker/person_bbox',         10)
         if self.publish_debug:
             self.pub_debug = self.create_publisher(Image, '/person_tracker/detections_image', 10)
+
+        # Coarse FSM state for rover_bt (latched so a late BT subscriber still
+        # gets the current state). The BT speaks on the LOST_STOPPED / re-acquire
+        # edges and keeps the rover in PERSON_TRACK.
+        status_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.pub_status = self.create_publisher(String, status_topic, status_qos)
+
+        # ------------------------------------------------------------------ #
+        # Control subscriptions (rover_bt integration)
+        # ------------------------------------------------------------------ #
+        # enable: RELIABLE + TRANSIENT_LOCAL so we latch the BT's last command
+        # even if the tracker (re)starts after the BT.
+        ctrl_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.create_subscription(Bool,   enable_topic,  self.enable_callback,  ctrl_qos)
+        self.create_subscription(String, profile_topic, self.profile_callback, ctrl_qos)
 
         # Safety watchdog: if RGB frames stop (camera crash/USB drop), the rgb
         # callback stops firing and the last cmd_vel would persist. This timer
@@ -362,8 +420,11 @@ class PersonDetectorNode(Node):
 
         self.get_logger().info(
             f'PersonDetector ready. RGB: {rgb_topic} | Depth: {depth_topic} | '
-            f'Class: "{self.target_class}" | Target dist: {self.target_distance_m}m'
+            f'Class: "{self.target_class}" | Target dist: {self.target_distance_m}m | '
+            f'cmd_vel: {cmd_vel_topic} | enabled: {self.enabled} | lock_on: {self.lock_on}'
         )
+        # Announce initial coarse state so a BT subscribing later still sees it.
+        self._publish_status('SEARCHING' if self.enabled else 'DISABLED')
 
     # ---------------------------------------------------------------------- #
     # cv_bridge-free image conversions (NumPy 2.x compatible)
@@ -413,6 +474,141 @@ class PersonDetectorNode(Node):
         self.cam_info_k = msg.k
         self.scale_x = 640.0 / msg.width  if msg.width  > 0 else 1.0
         self.scale_y = 360.0 / msg.height if msg.height > 0 else 1.0
+
+    # ---------------------------------------------------------------------- #
+    # rover_bt control interface: enable gate, profile switch, status output
+    # ---------------------------------------------------------------------- #
+
+    def enable_callback(self, msg: Bool):
+        """The BT toggles this when entering/leaving PERSON_TRACK. Enabling
+        re-locks onto a fresh target; disabling resets the FSM and goes silent
+        (publishes no twist, runs no inference)."""
+        want = bool(msg.data)
+        if want == self.enabled:
+            return
+        self.enabled = want
+        if want:
+            self.get_logger().info('Habilitado por rover_bt — buscando objetivo.')
+            self._reset_tracking()
+            self._publish_status('SEARCHING')
+        else:
+            self.get_logger().info('Deshabilitado por rover_bt — en reposo.')
+            self._reset_tracking()
+            self._publish_status('DISABLED')
+
+    def profile_callback(self, msg: String):
+        """Switch the live tuning profile (indoor/outdoor) without restarting."""
+        self._apply_profile(str(msg.data).strip().lower())
+
+    def _publish_status(self, coarse_state: str):
+        """Publish a coarse FSM state for the BT, de-duplicating re-publishes."""
+        if coarse_state == self._last_published_status:
+            return
+        self._last_published_status = coarse_state
+        self.pub_status.publish(String(data=coarse_state))
+
+    def _coarse_state(self) -> str:
+        """Map the internal FSM to the coarse state the BT reasons about."""
+        if not self.enabled:
+            return 'DISABLED'
+        if self.state == State.TRACKING:
+            return 'TRACKING'
+        if self.state == State.SEARCHING:
+            return 'SEARCHING'
+        if self.state == State.LOST_STOPPED:
+            return 'LOST_STOPPED'
+        return 'LOST_RECOVERING'   # LOST_WAITING / REVERSING / SEARCH_FIRST/SECOND
+
+    def _reset_tracking(self):
+        """Forget the locked target and return the FSM to a clean SEARCHING state
+        (used on enable/disable so each session starts fresh)."""
+        self.target_embedding = None
+        self.missed_frames = 0
+        self.last_target_box = None
+        self.last_target_conf = 0.0
+        self.state = State.SEARCHING
+        self.state_start_time = time.time()
+        self._enter_substate_normal()
+        self.center_dist_buffer.clear()
+        self._reset_cx_velocity()
+        self.last_linear_cmd = 0.0
+        self.last_cmd_time = None
+        self._latest_ref_distance = None
+        # Reset the frame watchdog so re-enabling doesn't trip a stale-frame stop
+        # before the first new RGB frame arrives.
+        self.last_rgb_time = None
+        self._frames_stale = False
+
+    def _apply_profile(self, profile: str):
+        """Re-apply the tuning parameters from the indoor/outdoor YAML live."""
+        path = {'indoor': self.params_indoor_file,
+                'outdoor': self.params_outdoor_file}.get(profile)
+        if not path:
+            self.get_logger().warn(
+                f"Perfil '{profile}' desconocido o sin archivo configurado; ignorando.")
+            return
+        try:
+            with open(path, 'r') as f:
+                doc = yaml.safe_load(f) or {}
+            params = doc.get('person_tracker_node', {}).get('ros__parameters', {})
+        except Exception as e:
+            self.get_logger().warn(f'No pude leer el perfil {profile} ({path}): {e}')
+            return
+
+        # yaml_key -> (attribute, caster). Only control/tuning keys — model,
+        # topics and Re-ID network are static and never swapped at runtime.
+        TUNING = {
+            'target_distance_m': ('target_distance_m', float),
+            'max_linear_speed': ('max_linear_speed', float),
+            'max_reverse_speed': ('max_reverse_speed', float),
+            'max_angular_speed': ('max_angular_speed', float),
+            'kp_linear': ('kp_linear', float),
+            'kp_angular': ('kp_angular', float),
+            'kd_angular': ('kd_angular', float),
+            'cx_velocity_ema_alpha': ('cx_velocity_ema_alpha', float),
+            'centering_deadzone': ('centering_deadzone', float),
+            'centering_suppress_linear_zone': ('centering_suppress_zone', float),
+            'center_dist_buffer_seconds': ('buffer_max_age_s', float),
+            'center_dist_min_samples': ('buffer_min_samples', int),
+            'depth_min_valid_m': ('depth_min_valid', float),
+            'depth_max_valid_m': ('depth_max_valid', float),
+            'curve_max_error_x': ('curve_max_error_x', float),
+            'arc_min_speed': ('arc_min_speed', float),
+            'accel_base': ('accel_base', float),
+            'accel_peak': ('accel_peak', float),
+            'decel_base': ('decel_base', float),
+            'decel_peak': ('decel_peak', float),
+            'ramp_urgency_scale': ('ramp_urgency_scale', float),
+            'emergency_distance': ('emergency_distance', float),
+            'emergency_decel': ('emergency_decel', float),
+            'wait_timeout_s': ('wait_timeout_s', float),
+            'reverse_duration_s': ('reverse_duration_s', float),
+            'search_turn_duration_s': ('search_turn_duration_s', float),
+            'reverse_speed': ('reverse_speed', float),
+            'search_turn_speed': ('search_turn_speed', float),
+            'corner_threshold': ('corner_threshold', float),
+            'recover_zone': ('recover_zone', float),
+            'approach_speed': ('approach_speed', float),
+            'approach_max_duration_s': ('approach_max_duration_s', float),
+            'pivot_max_angular_speed': ('pivot_max_angular_speed', float),
+            'pivot_ramp_duration_s': ('pivot_ramp_duration_s', float),
+            'pivot_max_angle_rad': ('pivot_max_angle_rad', float),
+            'pivot_max_duration_s': ('pivot_max_duration_s', float),
+            'reid_similarity_threshold': ('reid_threshold', float),
+            'reid_reacquire_threshold': ('reid_reacquire_threshold', float),
+            'reid_ema_alpha': ('reid_ema_alpha', float),
+            'reid_lost_frames': ('reid_lost_frames', int),
+        }
+        applied = 0
+        for key, (attr, cast) in TUNING.items():
+            if key in params:
+                try:
+                    setattr(self, attr, cast(params[key]))
+                    applied += 1
+                except (TypeError, ValueError):
+                    pass
+        self.get_logger().info(
+            f"Perfil '{profile}' aplicado ({applied} parámetros) desde {path}.")
 
     # ---------------------------------------------------------------------- #
     # Re-ID helpers
@@ -646,6 +842,8 @@ class PersonDetectorNode(Node):
         # Whenever we (re)enter TRACKING, start the sub-FSM fresh.
         if new_state == State.TRACKING:
             self._enter_substate_normal()
+        # Surface the coarse state to rover_bt (drives its lost/found speech).
+        self._publish_status(self._coarse_state())
 
     def _elapsed(self) -> float:
         return time.time() - self.state_start_time
@@ -818,6 +1016,11 @@ class PersonDetectorNode(Node):
         return v_new
 
     def _publish_twist(self, linear_x: float, angular_z: float):
+        # While disabled the tracker is silent: publishing even a zero here would
+        # hold the twist mux against navigation. The BT's /cmd_vel_safe path owns
+        # stopping the rover when it leaves PERSON_TRACK.
+        if not self.enabled:
+            return
         # Obstacle repulsion adjusts BOTH linear and angular before the linear ramp,
         # so the ramp smooths out the repulsion-induced brake too.
         linear_x, angular_z = self._apply_obstacle_repulsion(float(linear_x), float(angular_z))
@@ -835,11 +1038,16 @@ class PersonDetectorNode(Node):
         # state so the next real command starts from rest.
         self.last_linear_cmd = 0.0
         self.last_cmd_time = None
+        # Disabled = silent (don't hold the twist mux). Reset state above still runs.
+        if not self.enabled:
+            return
         msg = Twist()
         self.pub_cmd_vel.publish(msg)
 
     def _frame_watchdog(self):
         """Stop the robot if RGB frames go stale (camera crash / USB drop)."""
+        if not self.enabled:
+            return
         if self.last_rgb_time is None:
             return
         stale = (time.time() - self.last_rgb_time) > self.frame_timeout_s
@@ -889,10 +1097,43 @@ class PersonDetectorNode(Node):
         return float(np.median(valid))
 
     # ---------------------------------------------------------------------- #
+    # Target selection on (re)lock
+    # ---------------------------------------------------------------------- #
+
+    def _select_lock_target(self, detections: list, img_w: int, img_h: int) -> tuple:
+        """Choose which detection to lock onto. 'nearest' uses depth (falling back
+        to the largest box when depth is unavailable), 'largest' uses box area,
+        'confidence' the YOLO score. Returns (xyxy, conf)."""
+        if self.lock_on == 'confidence':
+            return max(detections, key=lambda d: d[1])
+
+        def area(box):
+            x1, y1, x2, y2 = box
+            return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+        if self.lock_on == 'nearest':
+            best = None  # (distance, -area, det)
+            for xyxy, conf in detections:
+                dist = self._estimate_distance(xyxy, img_w, img_h)
+                key = (dist if dist is not None else float('inf'), -area(xyxy))
+                if best is None or key < best[0]:
+                    best = (key, (xyxy, conf))
+            if best is not None and best[0][0] != float('inf'):
+                return best[1]
+            # No usable depth → fall back to the largest (usually the closest).
+
+        # 'largest' (and nearest's fallback)
+        return max(detections, key=lambda d: area(d[0]))
+
+    # ---------------------------------------------------------------------- #
     # Main RGB callback
     # ---------------------------------------------------------------------- #
 
     def rgb_callback(self, msg: Image):
+        # Disabled by the BT: run no detection and stay silent. This is what keeps
+        # the (heavy) YOLO+OSNet pipeline off the GPU outside PERSON_TRACK.
+        if not self.enabled:
+            return
         # Mark frame arrival for the watchdog (even if decoding fails below).
         self.last_rgb_time = time.time()
         self.frame_count += 1
@@ -940,9 +1181,12 @@ class PersonDetectorNode(Node):
         do_reid = (self.target_embedding is None) or (self.frame_count % self.reid_every_n == 0)
 
         if self.target_embedding is None:
-            # SEARCHING: lock onto the highest-confidence person (needs an embedding)
+            # SEARCHING: lock onto the operator-chosen person. Default 'nearest'
+            # picks whoever is closest (stepped in front to be followed) rather
+            # than just the highest YOLO score, so the BT enabling the tracker
+            # locks the right person.
             if detections:
-                xyxy, conf = max(detections, key=lambda d: d[1])
+                xyxy, conf = self._select_lock_target(detections, img_w, img_h)
                 emb = self._extract_embedding(frame, xyxy)
                 if emb is not None:
                     target_box  = xyxy

@@ -18,6 +18,8 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/joy.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include "rover_bt/msg/command.hpp"
 #include "rover_bt/msg/rover_status.hpp"
@@ -54,6 +56,7 @@ private:
   void on_trajectory(const nav_msgs::msg::Path::SharedPtr msg);
   void on_command(const rover_bt::msg::Command::SharedPtr msg);
   void on_joy(const sensor_msgs::msg::Joy::SharedPtr msg);
+  void on_person_status(const std_msgs::msg::String::SharedPtr msg);
 
   // Services
   void handle_send_command(
@@ -82,6 +85,8 @@ private:
   // ROS Publishers
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
   rclcpp::Publisher<rover_bt::msg::RoverStatus>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr person_enable_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr person_profile_pub_;
 
   // ROS Subscribers
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr lidar_sub_;
@@ -96,6 +101,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<rover_bt::msg::Command>::SharedPtr command_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr person_status_sub_;
 
   // ROS Services
   rclcpp::Service<rover_bt::srv::SendCommand>::SharedPtr send_command_srv_;
@@ -113,6 +119,9 @@ private:
   double motor_stale_timeout_{5.0};
   bool monitor_lidar_{false};
   bool monitor_wheels_{true};
+
+  // Previous coarse person-tracker state, for edge-detecting lost/found events.
+  std::string last_person_state_{"DISABLED"};
 };
 
 }  // namespace rover_bt
