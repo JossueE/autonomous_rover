@@ -53,10 +53,11 @@ def generate_launch_description():
 
     rtabmap_mode = LaunchConfiguration('rtabmap_mode')
     log_level = LaunchConfiguration('log_level')
+    robot = LaunchConfiguration('robot')
 
     # 1 + 2 — hardware and localization come up immediately.
     hardware = _include('rover_bringup', 'hardware_bringup.launch.py',
-                        {'log_level': log_level})
+                        {'robot': robot, 'log_level': log_level})
     localization = _include(
         'rover_bringup', 'k4a_rtabmap.launch.py',
         {'mode': rtabmap_mode, 'log_level': log_level},
@@ -67,13 +68,13 @@ def generate_launch_description():
     planner = TimerAction(period=8.0, actions=[
         _include(
             'path_planning_dynamic', 'planning.launch.py',
-            {'use_sim_time': 'False', 'rviz_config': nav_rviz},
+            {'robot': robot, 'use_sim_time': 'False', 'rviz_config': nav_rviz},
         ),
     ])
 
     # 4 — NMPC velocity controller (/sdv_trajectory -> /cmd_vel_safe).
     nmpc = TimerAction(period=10.0, actions=[
-        _include('nmpc_controller', 'sim_nmpc.launch.py', {'use_sim_time': 'False'}),
+        _include('nmpc_controller', 'sim_nmpc.launch.py', {'robot': robot, 'use_sim_time': 'False'}),
     ])
 
     # 5 — behaviour tree (the brain) + voice node, once everything else exists.
@@ -89,6 +90,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'log_level', default_value='warn',
             description='Log level for all nodes (debug|info|warn|error).'),
+        DeclareLaunchArgument(
+            'robot', default_value='zlac706',
+            choices=['zlac8015d', 'zlac706'],
+            description='Robot profile used for hardware, planner, and controller parameters.'),
 
         LogInfo(msg='=== Rover full bring-up: hardware + localization + planner + NMPC + BT ==='),
         hardware,

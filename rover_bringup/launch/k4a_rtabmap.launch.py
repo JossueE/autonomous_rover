@@ -34,6 +34,7 @@ def generate_launch_description():
         parameters=[{
             'point_cloud': True,
             'rgb_point_cloud': False,
+            'color_resolution': '1536P',
             'fps': 30,
         }],
     )

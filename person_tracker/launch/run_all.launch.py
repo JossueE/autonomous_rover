@@ -25,7 +25,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[{
             'depth_mode': 'NFOV_2X2BINNED',
-            'color_resolution': '720P',
+            'color_resolution': '1536P',
             'fps': 15,
         }],
     )

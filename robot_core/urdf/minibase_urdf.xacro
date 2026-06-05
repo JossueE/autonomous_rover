@@ -62,8 +62,9 @@
   <!-- Argumentos y Propiedades -->
   <xacro:arg name="base_color" default="0.45 0.48 0.50 1.0"/>
   <xacro:arg name="sim" default="false"/>
+  <xacro:arg name="wheel_separation" default="0.315"/>
   <xacro:property name="sim_mode" value="$(arg sim)"/>
-  <xacro:property name="wheelSeparation" value="0.35"/>
+  <xacro:property name="wheelSeparation" value="$(arg wheel_separation)"/>
   <xacro:property name="wheelRadius" value="0.1"/>
   <xacro:property name="baseLength" value="0.55"/>
   <xacro:property name="baseWidth" value="${wheelSeparation-0.06}"/>
@@ -293,7 +294,7 @@
   <!-- ===================== KINECT ====================== -->
   <xacro:arg name="kinect_offset_x" default="0.115"/>
   <xacro:arg name="kinect_offset_y" default="0.0"/>
-  <xacro:arg name="kinect_offset_z" default="0.39"/>
+  <xacro:arg name="kinect_offset_z" default="0.30"/>
   <xacro:arg name="kinect_offset_roll" default="0.0"/>
   <xacro:arg name="kinect_offset_pitch" default="0.0"/>
   <xacro:arg name="kinect_offset_yaw" default="0.0"/>

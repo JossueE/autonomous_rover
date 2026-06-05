@@ -10,9 +10,10 @@ def generate_launch_description():
         executable="azure_kinect_node",
         name="k4a_ros2_node",
         output="screen",
-        emulate_tty=True
+        emulate_tty=True,
         parameters=[{
             "depth_mode": "NFOV_2X2BINNED",
+            "color_resolution": "1536P",
         }], 
             
     )

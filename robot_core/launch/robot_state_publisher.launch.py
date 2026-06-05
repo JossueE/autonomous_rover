@@ -8,6 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     lidar_model = LaunchConfiguration('lidar_model')
     base_color = LaunchConfiguration('base_color')
+    wheel_separation = LaunchConfiguration('wheel_separation')
     camera_x = LaunchConfiguration('camera_x')
     camera_z = LaunchConfiguration('camera_z')
     camera_pitch = LaunchConfiguration('camera_pitch')
@@ -28,6 +29,8 @@ def generate_launch_description():
             ' base_color:="',
             base_color,
             '"',
+            ' wheel_separation:=',
+            wheel_separation,
             ' kinect_offset_x:=',
             camera_x,
             ' kinect_offset_z:=',
@@ -40,8 +43,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('lidar_model', default_value='pacecat'),
         DeclareLaunchArgument('base_color', default_value='0.45 0.48 0.50 1.0'),
-        DeclareLaunchArgument('camera_x', default_value='0.115'),
-        DeclareLaunchArgument('camera_z', default_value='0.43'),
+        DeclareLaunchArgument('wheel_separation', default_value='0.315'),
+        DeclareLaunchArgument('camera_x', default_value='0.23'),
+        DeclareLaunchArgument('camera_z', default_value='0.20'),
         DeclareLaunchArgument('camera_pitch', default_value='0.0'),
         Node(
             package='robot_state_publisher',

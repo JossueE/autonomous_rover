@@ -6,9 +6,9 @@ Lanza en un solo comando:
   3. image_view                      (visualización de detecciones)
 
 Uso:
-  ros2 launch person_tracker bringup.launch.py                       # outdoor (default)
-  ros2 launch person_tracker bringup.launch.py mode:=indoor          # indoor
-  ros2 launch person_tracker bringup.launch.py motors_port:=/dev/WHEELS
+  ros2 launch person_tracker bringup.launch.py robot:=zlac706        # outdoor (default)
+  ros2 launch person_tracker bringup.launch.py robot:=zlac706 mode:=indoor
+  ros2 launch person_tracker bringup.launch.py robot:=zlac8015d motors_port:=/dev/WHEELS
   ros2 launch person_tracker bringup.launch.py mode:=indoor use_image_view:=false
 """
 
@@ -23,6 +23,13 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    robot_arg = DeclareLaunchArgument(
+        'robot',
+        default_value='zlac706',
+        choices=['zlac8015d', 'zlac706'],
+        description='Perfil de robot usado por rover_bringup.hardware_bringup',
+    )
+
     mode_arg = DeclareLaunchArgument(
         'mode',
         default_value='outdoor',
@@ -33,6 +40,18 @@ def generate_launch_description():
         'motors_port',
         default_value='/dev/ttyUSB0',
         description='Puerto serial del driver de ruedas ZLAC8015D (ej. /dev/ttyUSB0, /dev/WHEELS)',
+    )
+
+    motor_left_port_arg = DeclareLaunchArgument(
+        'motor_left_port',
+        default_value='/dev/ttyUSB0',
+        description='Puerto serial del driver izquierdo ZLAC706',
+    )
+
+    motor_right_port_arg = DeclareLaunchArgument(
+        'motor_right_port',
+        default_value='/dev/ttyUSB1',
+        description='Puerto serial del driver derecho ZLAC706',
     )
 
     use_image_view_arg = DeclareLaunchArgument(
@@ -49,7 +68,12 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(rover_pkg_dir, 'launch', 'hardware_bringup.launch.py')
         ),
-        launch_arguments={'motors_port': LaunchConfiguration('motors_port')}.items(),
+        launch_arguments={
+            'robot': LaunchConfiguration('robot'),
+            'motors_port': LaunchConfiguration('motors_port'),
+            'motor_left_port': LaunchConfiguration('motor_left_port'),
+            'motor_right_port': LaunchConfiguration('motor_right_port'),
+        }.items(),
     )
 
     # 2. Cámara Kinect + detector (propaga el modo elegido)
@@ -71,8 +95,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        robot_arg,
         mode_arg,
         motors_port_arg,
+        motor_left_port_arg,
+        motor_right_port_arg,
         use_image_view_arg,
         hardware_launch,
         detector_launch,

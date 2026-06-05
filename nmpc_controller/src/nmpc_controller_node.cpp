@@ -56,7 +56,7 @@ public:
     // NMPC discretization and differential-drive model parameters.
     this->declare_parameter<double>("h", 0.2);      // Sampling time [s].
     this->declare_parameter<int>("N", 10);          // Prediction horizon length.
-    this->declare_parameter<double>("L", 0.35);     // Track width [m].
+    this->declare_parameter<double>("L", 0.315);    // Track width [m].
     this->declare_parameter<double>("v_max", 0.22); // Max wheel speed [m/s].
     this->declare_parameter<double>("a_max", 0.35); // Max wheel acceleration [m/s^2].
 

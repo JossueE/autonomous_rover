@@ -38,7 +38,7 @@ public:
     // Wheels configuration parameters
     this->declare_parameter<bool>("wheelR_is_backward", false);
     this->declare_parameter<bool>("wheelL_is_backward", true);
-    this->declare_parameter<double>("wheels_separation", 0.4f);
+    this->declare_parameter<double>("wheels_separation", 0.315);
     this->declare_parameter<double>("wheel_radius", 0.1f);
 
     // Acceleration and deceleration time for velocity control mode. 

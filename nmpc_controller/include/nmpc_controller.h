@@ -30,7 +30,7 @@ struct ControllerConfig {
   double h{0.2}; ///< Sampling time [s] used by the prediction model.
   int N{20};     ///< Number of states in the prediction horizon.
 
-  double L{0.35};      ///< Track width [m] for the differential-drive model.
+  double L{0.315};     ///< Track width [m] for the differential-drive model.
   double v_max{0.8};   ///< Maximum wheel linear velocity [m/s].
   double a_max{0.5};   ///< Maximum wheel linear acceleration [m/s^2].
 
