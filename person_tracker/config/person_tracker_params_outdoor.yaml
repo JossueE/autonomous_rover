@@ -1,0 +1,76 @@
+person_tracker_node:
+  ros__parameters:
+
+    # ── YOLO ──────────────────────────────────────────────────────────────
+    model_path: "yolov8n.pt"
+    confidence_threshold: 0.5
+    device: "0"                         # "0" = first CUDA GPU, "cpu" = CPU
+
+    # ── INPUT TOPICS (Azure Kinect) ────────────────────────────────────────
+    rgb_topic:          "/k4a/rgb/image_raw"
+    depth_topic:        "/k4a/depth_to_rgb/image_raw"
+    camera_info_topic:  "/k4a/rgb/camera_info"
+
+    # ── DETECTION ─────────────────────────────────────────────────────────
+    target_class: "person"
+    publish_debug_image: true
+
+    # ── RE-IDENTIFICATION (OSNet) ──────────────────────────────────────────
+    reid_model: "osnet_ibn_x1_0"           # osnet_x0_25 | osnet_x0_5 | osnet_x1_0
+    reid_similarity_threshold: 0.7      # cosine similarity to accept a match [0-1]
+    reid_ema_alpha: 0.9                 # EMA weight for target embedding update
+
+    # ── TRACKING CONTROL ──────────────────────────────────────────────────
+    target_distance_m: 1.1              # desired following distance (meters)
+    max_linear_speed: 1.75              # m/s
+    max_angular_speed: 1.9              # rad/s (~109 deg/s) — +25% para giros más rápidos
+    max_reverse_speed: 0.5              # m/s — cap aparte para la reversa (más suave que el avance)
+    kp_linear: 1.2                     # bajado de 1.5 para reducir oscilación cerca del target
+    kp_angular: 3.1                     # +25% para llegar al tope angular más rápido
+    kd_angular: 1.5                     # ganancia D — anticipa giros laterales rápidos
+    cx_velocity_ema_alpha: 0.6          # filtro EMA de velocidad cx_norm (0=sin filtro, 1=no actualiza)
+    centering_deadzone: 0.05            # fraction of image width (no rotation inside zone)
+    centering_suppress_linear_zone: 0.45  # P-distance taper starts when this off-center
+
+    # ── CURVED TRACKING (legacy, sin uso con la FSM corner+pivot) ──────────
+    arc_min_speed: 0.0                  # (desactivado: la FSM ya no usa arco)
+    curve_max_error_x: 0.6              # (sin uso)
+    center_dist_buffer_seconds: 2.0     # buffer aún se usa como fallback de distancia
+    center_dist_min_samples: 3
+    depth_min_valid_m: 0.5
+    depth_max_valid_m: 3.5
+
+    # ── FSM CORNER + PIVOT (drive-to-last-position, luego pivote con IMU) ──
+    imu_topic: "/k4a/imu"               # tópico IMU del Azure Kinect
+    imu_yaw_axis: "z"                   # eje de yaw en frame del IMU ('x','y' o 'z')
+    corner_threshold: 0.45              # |error_x| > esto → entra a APPROACHING
+    recover_zone: 0.20                  # |error_x| < esto → vuelve a NORMAL (hysteresis)
+    approach_speed: 1.0                 # m/s en la fase de aproximación a la esquina
+    approach_max_duration_s: 3.0        # si no llega en este tiempo, pasa a PIVOTING
+    pivot_max_angular_speed: 1.9        # rad/s tope durante el pivote — +25%
+    pivot_ramp_duration_s: 0.3          # ramp-up suave del giro (de 0 a tope)
+    pivot_max_angle_rad: 2.5            # ~143°: si no encuentra a la persona, se da por perdido
+
+    # ── RAMPAS DE ACELERACIÓN / FRENADO (reactivas a la distancia) ─────────
+    # Límite m/s² de cambio de velocidad por segundo. El "pico" se usa cuando
+    # hay urgencia (persona lejos al acelerar, persona cerca al frenar).
+    accel_base: 0.3                     # m/s² — más suave aún (0→1.5 m/s en 5 s)
+    accel_peak: 0.7                     # m/s² — pico (0→1.5 m/s en ~2.1 s)
+    decel_base: 0.4                     # m/s² — frenado suave
+    decel_peak: 0.9                     # m/s² — frenado firme (la emergencia frena fuerte cuando hace falta)
+    ramp_urgency_scale: 2.0             # m de error de distancia para alcanzar el pico
+
+    # Emergencia: si la persona se acerca peligrosamente, ignora la rampa
+    # y permite frenar/reversar a esta aceleración (mucho más fuerte) para no chocar.
+    emergency_distance: 0.7             # m — por debajo de esto, modo emergencia
+    emergency_decel: 5.0                # m/s² — distancia de frenado @ 1.5 m/s ≈ 0.22 m
+
+    # ── EVASIÓN DE OBSTÁCULOS (desactivado en outdoor) ────────────────────
+    obstacle_avoidance_enabled: false
+
+    # ── RECOVERY (lost person) ─────────────────────────────────────────────
+    wait_timeout_s: 5.0                 # seconds stopped before starting recovery
+    reverse_duration_s: 3.0            # seconds to reverse
+    search_turn_duration_s: 5.0        # seconds to turn in each direction
+    reverse_speed: 0.15                 # m/s (applied as negative linear)
+    search_turn_speed: 0.6             # rad/s (doubled for faster search)
