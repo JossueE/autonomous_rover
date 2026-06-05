@@ -28,7 +28,8 @@ def generate_launch_description():
             'unlock_driver': True,
             'accel_time_ms': 500,
             'decel_time_ms': 500,
-            'wheels_separation': 0.35
+            'wheels_separation': 0.35,
+            'resolution_mode': True
         }]
     )
 
