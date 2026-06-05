@@ -287,6 +287,32 @@ void RoverBTNode::tick_tree() {
 }
 
 namespace {
+// Seconds (as a double) from a ROS message header stamp.
+template <typename StampT>
+double to_seconds(const StampT& stamp) {
+  return stamp.sec + stamp.nanosec * 1e-9;
+}
+
+// Yaw (rad) from a quaternion orientation.
+double quat_to_yaw(const geometry_msgs::msg::Quaternion& q) {
+  tf2::Quaternion tq(q.x, q.y, q.z, q.w);
+  double roll, pitch, yaw;
+  tf2::Matrix3x3(tq).getRPY(roll, pitch, yaw);
+  return yaw;
+}
+
+// A sensor reported as intentionally disabled (e.g. not present on this robot),
+// so downstream consumers don't flag it as a missing/stale sensor.
+rover_bt::msg::SensorHealth disabled_health(
+    const std::string& name, const std::string& detail) {
+  rover_bt::msg::SensorHealth h;
+  h.name = name;
+  h.status = rover_bt::msg::SensorHealth::OK;
+  h.last_seen_ago = -1.0f;
+  h.detail = detail;
+  return h;
+}
+
 // Build a SensorHealth entry from the last-seen timestamp.
 rover_bt::msg::SensorHealth make_health(
     const std::string& name, double last_seen, double now, double timeout) {
@@ -359,12 +385,7 @@ void RoverBTNode::publish_status() {
   } else {
     // Real hardware has no lidar; report it as disabled rather than stale so
     // downstream consumers don't flag a missing sensor that isn't expected.
-    rover_bt::msg::SensorHealth lidar;
-    lidar.name = "lidar";
-    lidar.status = rover_bt::msg::SensorHealth::OK;
-    lidar.last_seen_ago = -1.0f;
-    lidar.detail = "disabled (sim only)";
-    msg.sensor_health.push_back(lidar);
+    msg.sensor_health.push_back(disabled_health("lidar", "disabled (sim only)"));
   }
   msg.sensor_health.push_back(
     make_health("camera", ctx_->last_camera_time.load(), now, camera_stale_timeout_));
@@ -374,12 +395,7 @@ void RoverBTNode::publish_status() {
     msg.sensor_health.push_back(
       make_health("motor",  ctx_->last_motor_time.load(),  now, motor_stale_timeout_));
   } else {
-    rover_bt::msg::SensorHealth motor;
-    motor.name = "motor";
-    motor.status = rover_bt::msg::SensorHealth::OK;
-    motor.last_seen_ago = -1.0f;
-    motor.detail = "disabled (sim)";
-    msg.sensor_health.push_back(motor);
+    msg.sensor_health.push_back(disabled_health("motor", "disabled (sim)"));
   }
 
   status_pub_->publish(msg);
@@ -388,30 +404,20 @@ void RoverBTNode::publish_status() {
 // ─── Callbacks ────────────────────────────────────────────────────────
 
 void RoverBTNode::on_laser_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-  ctx_->last_lidar_time.store(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
+  ctx_->last_lidar_time.store(to_seconds(msg->header.stamp));
 }
 
 void RoverBTNode::on_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-  ctx_->last_camera_time.store(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
+  ctx_->last_camera_time.store(to_seconds(msg->header.stamp));
 }
 
 void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  double t = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
-  ctx_->last_odom_time.store(t);
+  ctx_->last_odom_time.store(to_seconds(msg->header.stamp));
 
   // Extract pose info
   double x = msg->pose.pose.position.x;
   double y = msg->pose.pose.position.y;
-  
-  tf2::Quaternion q(
-    msg->pose.pose.orientation.x,
-    msg->pose.pose.orientation.y,
-    msg->pose.pose.orientation.z,
-    msg->pose.pose.orientation.w
-  );
-  tf2::Matrix3x3 m(q);
-  double roll, pitch, yaw;
-  m.getRPY(roll, pitch, yaw);
+  double yaw = quat_to_yaw(msg->pose.pose.orientation);
 
   // Update only if pose source is still odom
   std::lock_guard<std::mutex> lock(ctx_->pose_source_mutex);
@@ -424,7 +430,7 @@ void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
 }
 
 void RoverBTNode::on_imu(const sensor_msgs::msg::Imu::SharedPtr msg) {
-  ctx_->last_imu_time.store(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
+  ctx_->last_imu_time.store(to_seconds(msg->header.stamp));
 }
 
 void RoverBTNode::on_wheel_data(const std_msgs::msg::Float64::SharedPtr /*msg*/) {
@@ -440,16 +446,7 @@ void RoverBTNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamp
   
   double x = msg->pose.pose.position.x;
   double y = msg->pose.pose.position.y;
-  
-  tf2::Quaternion q(
-    msg->pose.pose.orientation.x,
-    msg->pose.pose.orientation.y,
-    msg->pose.pose.orientation.z,
-    msg->pose.pose.orientation.w
-  );
-  tf2::Matrix3x3 m(q);
-  double roll, pitch, yaw;
-  m.getRPY(roll, pitch, yaw);
+  double yaw = quat_to_yaw(msg->pose.pose.orientation);
 
   ctx_->robot_x.store(x);
   ctx_->robot_y.store(y);
@@ -457,7 +454,7 @@ void RoverBTNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamp
 }
 
 void RoverBTNode::on_trajectory(const nav_msgs::msg::Path::SharedPtr msg) {
-  ctx_->last_trajectory_time.store(msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9);
+  ctx_->last_trajectory_time.store(to_seconds(msg->header.stamp));
 }
 
 void RoverBTNode::on_command(const rover_bt::msg::Command::SharedPtr msg) {

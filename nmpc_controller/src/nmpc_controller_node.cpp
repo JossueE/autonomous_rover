@@ -385,20 +385,44 @@ private:
       return ref;
     }
 
-    for (std::size_t i = 0; i < n - 1; ++i) {
-      const double dx = ref.x[i + 1] - ref.x[i];
-      const double dy = ref.y[i + 1] - ref.y[i];
-
-      if (std::hypot(dx, dy) > 1e-9) {
-        ref.theta[i] = std::atan2(dy, dx);
-      } else if (isFiniteQuaternion(path_msg.poses[i].pose.orientation)) {
-        ref.theta[i] = quaternionToYaw(path_msg.poses[i].pose.orientation);
-      } else {
-        ref.theta[i] = (i == 0) ? 0.0 : ref.theta[i - 1];
+    // Prefer the planner's per-pose heading when the path actually carries
+    // orientation. The differential planner emits a smooth, kinematically
+    // consistent heading per sample; recomputing it from atan2 of consecutive
+    // ~5 cm points injects finite-difference noise (and spikes at in-place
+    // rotation samples) into the angular-velocity reference, which makes the
+    // controller zig-zag. Fall back to atan2 only when the path has no usable
+    // orientation (e.g. RViz clicked points or path_drawer output).
+    bool path_has_orientation = false;
+    for (std::size_t i = 0; i < n; ++i) {
+      const auto &q = path_msg.poses[i].pose.orientation;
+      if (isFiniteQuaternion(q) &&
+          (std::abs(q.x) + std::abs(q.y) + std::abs(q.z)) > 1e-6) {
+        path_has_orientation = true;
+        break;
       }
     }
-    ref.theta[n - 1] = ref.theta[n - 2];
 
+    if (path_has_orientation) {
+      for (std::size_t i = 0; i < n; ++i) {
+        ref.theta[i] = quaternionToYaw(path_msg.poses[i].pose.orientation);
+      }
+    } else {
+      for (std::size_t i = 0; i < n - 1; ++i) {
+        const double dx = ref.x[i + 1] - ref.x[i];
+        const double dy = ref.y[i + 1] - ref.y[i];
+
+        if (std::hypot(dx, dy) > 1e-9) {
+          ref.theta[i] = std::atan2(dy, dx);
+        } else if (isFiniteQuaternion(path_msg.poses[i].pose.orientation)) {
+          ref.theta[i] = quaternionToYaw(path_msg.poses[i].pose.orientation);
+        } else {
+          ref.theta[i] = (i == 0) ? 0.0 : ref.theta[i - 1];
+        }
+      }
+      ref.theta[n - 1] = ref.theta[n - 2];
+    }
+
+    // Unwrap so consecutive headings are continuous before differencing.
     for (std::size_t i = 1; i < n; ++i) {
       const double dtheta = wrapToPi(ref.theta[i] - ref.theta[i - 1]);
       ref.theta[i] = ref.theta[i - 1] + dtheta;
