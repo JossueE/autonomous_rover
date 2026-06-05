@@ -409,15 +409,11 @@ void RoverBTNode::on_command(const rover_bt::msg::Command::SharedPtr msg) {
 }
 
 void RoverBTNode::on_joy(const sensor_msgs::msg::Joy::SharedPtr msg) {
-  // Mark the joystick as active whenever the operator is doing something:
-  // any button pressed or either stick deflected beyond the threshold.
-  // teleop_joycon owns velocity publishing and its own deadman gating;
-  // the BT only needs to know the joycon is in use to trigger JoyconOverlay.
-  const bool any_button = std::any_of(msg->buttons.begin(), msg->buttons.end(),
-                                      [](int b) { return b == 1; });
-  const bool stick_moved = (msg->axes.size() > 1 && std::abs(msg->axes[1]) > 0.2) ||
-                           (msg->axes.size() > 3 && std::abs(msg->axes[3]) > 0.2);
-  if (any_button || stick_moved) {
+  // Mark the joystick as active only when the R1 deadman is held — mirrors
+  // the deadman gate in teleop_joycon so TELEOP_JOYCON mode is entered only
+  // during intentional manual driving, not from incidental stick movement.
+  const bool deadman = msg->buttons.size() > 5 && msg->buttons[5] == 1;
+  if (deadman) {
     ctx_->last_joy_active_time.store(this->now().seconds());
   }
 
