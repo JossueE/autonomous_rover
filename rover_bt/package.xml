@@ -36,6 +36,9 @@
   <member_of_group>rosidl_interface_packages</member_of_group>
   <exec_depend>rosidl_default_runtime</exec_depend>
 
+  <!-- PERSON_TRACK mode launches/controls the person_tracker follower. -->
+  <exec_depend>person_tracker</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

@@ -8,6 +8,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/string.hpp>
 
 namespace rover_bt {
 class TTSClient;
@@ -19,6 +21,13 @@ struct SharedContext {
 
   // Publishers
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub;
+
+  // Person-tracker control. enable is driven from {mode} every tick (true only
+  // in PERSON_TRACK), so leaving the mode — including via an emergency that
+  // forces mode=EMERGENCY — automatically silences the follower. profile lets a
+  // BT action push an indoor/outdoor tuning switch to the tracker.
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr person_enable_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr person_profile_pub;
 
   // Shared subsystems (raw ptrs owned by RoverBTNode)
   TTSClient* tts = nullptr;
@@ -57,6 +66,12 @@ struct SharedContext {
   // Last time the joystick was used with its deadman held. Drives automatic
   // TELEOP_JOYCON entry/exit (CheckJoyActive). 0.0 = never used.
   std::atomic<double> last_joy_active_time{0.0};
+
+  // Person-tracker feedback (coarse FSM state from /person_tracker/status) plus
+  // edge events the BT consumes once to speak: the follower reaching LOST_STOPPED
+  // (person_lost_event) and re-acquiring after being lost (person_found_event).
+  std::atomic<bool> person_lost_event{false};
+  std::atomic<bool> person_found_event{false};
 
   // Robot pose
   std::atomic<double> robot_x{0.0};

@@ -8,8 +8,14 @@ than one. Both `nmpc_controller_node` (navigation velocities) and `rover_bt_node
 publishers. This node is the single publisher on the output topic and merges the
 two sources by priority:
 
-  - cmd_vel_safe (rover_bt) -> higher priority  : stop/emergency authority wins
-  - cmd_vel_nav (NMPC)      -> lower  priority  : passes through when BT is quiet
+  - cmd_vel_safe   (rover_bt)       -> highest priority : stop/emergency authority wins
+  - cmd_vel_person (person_tracker) -> middle  priority : person-follow, when BT is quiet
+  - cmd_vel_nav    (NMPC)           -> lowest  priority : passes through when both quiet
+
+person_tracker only publishes /cmd_vel_person while rover_bt has enabled it (in
+PERSON_TRACK mode), and goes silent otherwise — so it never steals the bus from
+navigation, yet rover_bt's /cmd_vel_safe (emergency / odom-loss ZeroTwist) still
+overrides it instantly.
 
 Each input is only considered while it has published within `timeout` seconds, so
 a source that goes silent releases the bus (matches twist_mux semantics). Output
@@ -27,12 +33,14 @@ class TwistPriorityMux(Node):
 
         self.declare_parameter("output_topic", "/cmd_vel")
         self.declare_parameter("high_topic", "/cmd_vel_safe")
+        self.declare_parameter("person_topic", "/cmd_vel_person")
         self.declare_parameter("low_topic", "/cmd_vel_nav")
         self.declare_parameter("timeout", 0.5)      # s; input considered stale after this
         self.declare_parameter("rate_hz", 20.0)
 
         out = self.get_parameter("output_topic").value
         self.high_topic = self.get_parameter("high_topic").value
+        self.person_topic = self.get_parameter("person_topic").value
         self.low_topic = self.get_parameter("low_topic").value
         self.timeout = float(self.get_parameter("timeout").value)
         rate = float(self.get_parameter("rate_hz").value)
@@ -40,11 +48,14 @@ class TwistPriorityMux(Node):
         # priority -> (last Twist, last stamp seconds). Highest priority first.
         self._inputs = {
             self.high_topic: {"prio": 100, "msg": None, "t": -1e9},
+            self.person_topic: {"prio": 50, "msg": None, "t": -1e9},
             self.low_topic: {"prio": 10, "msg": None, "t": -1e9},
         }
 
         self.create_subscription(Twist, self.high_topic,
                                  lambda m: self._on(self.high_topic, m), 10)
+        self.create_subscription(Twist, self.person_topic,
+                                 lambda m: self._on(self.person_topic, m), 10)
         self.create_subscription(Twist, self.low_topic,
                                  lambda m: self._on(self.low_topic, m), 10)
 
@@ -52,8 +63,8 @@ class TwistPriorityMux(Node):
         self.timer = self.create_timer(1.0 / rate, self._tick)
 
         self.get_logger().info(
-            f"twist_priority_mux: [{self.high_topic} p100] > [{self.low_topic} p10] "
-            f"-> {out} (timeout={self.timeout}s, rate={rate}Hz)")
+            f"twist_priority_mux: [{self.high_topic} p100] > [{self.person_topic} p50] "
+            f"> [{self.low_topic} p10] -> {out} (timeout={self.timeout}s, rate={rate}Hz)")
 
     def _on(self, topic, msg):
         e = self._inputs[topic]

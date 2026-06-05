@@ -152,7 +152,7 @@ wake word. To navigate, say `ve a <place>` / `ir a <place>`.
 | `inicia mapeo` | `start_mapping` | Start new map (RTAB-Map mapping) |
 | `detén el mapeo` / `guarda el mapa` | `stop_mapping` | Stop & save the map |
 | `estado` / `dónde estás` | `status` | Publish/announce status |
-| `seguir persona` / `sígueme` | `person_track` | Person-follow mode *(not yet implemented)* |
+| `seguir persona` / `sígueme` | `person_track` | Person-follow mode (drives the `person_tracker` follower) |
 
 The exact phrase map (including phonetic near-misses the recognizer produces)
 lives in [`scripts/voice_command_node.py`](scripts/voice_command_node.py)
@@ -263,9 +263,19 @@ stateDiagram-v2
 ```
 
 `EMERGENCY` is sticky: while in it, every command except `resume` is discarded,
-so a `navigate` arriving during an emergency does nothing. `PERSON_TRACK` is
-referenced by commands but has no implemented case yet — the dispatch's default
-resets it to `IDLE`.
+so a `navigate` arriving during an emergency does nothing.
+
+`PERSON_TRACK` delegates the actual following to the **`person_tracker`** node
+(YOLOv8 + OSNet). The BT owns the *mode*, not the control loop: it asserts
+`/person_tracker/enable` (driven straight from `{mode}` every tick — so any exit,
+including an emergency forcing `EMERGENCY`, silences the follower within one
+tick), pushes the indoor/outdoor tuning profile via `/person_tracker/profile`
+(the `person_track` command's `target` — re-send to switch live), and reads the
+follower's coarse FSM on `/person_tracker/status` to speak on the lost / re-found
+edges. The follower publishes velocity to `/cmd_vel_person`, which the twist mux
+routes **below** `/cmd_vel_safe`, so the BT's Safety/odom e-stops always win. On
+permanent loss the rover stays in `PERSON_TRACK`, announces, and keeps watching
+to re-acquire; `stop`/`autonomous` returns to `IDLE`.
 
 ## Command arbitration
 

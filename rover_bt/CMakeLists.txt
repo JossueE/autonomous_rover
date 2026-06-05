@@ -44,6 +44,7 @@ set(BT_CONDITION_SOURCES
   src/nodes/conditions/check_nav_status.cpp
   src/nodes/conditions/check_flag.cpp
   src/nodes/conditions/check_joy_active.cpp
+  src/nodes/conditions/check_person_event.cpp
 )
 
 set(BT_ACTION_SOURCES
@@ -61,6 +62,7 @@ set(BT_ACTION_SOURCES
   src/nodes/actions/increment_patrol_index.cpp
   src/nodes/actions/save_location.cpp
   src/nodes/actions/process_command.cpp
+  src/nodes/actions/set_person_profile.cpp
 )
 
 set(CORE_SOURCES

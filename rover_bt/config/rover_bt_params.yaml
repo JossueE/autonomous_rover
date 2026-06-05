@@ -21,6 +21,13 @@ rover_bt_node:
     joy_topic: "/joy"
     status_topic: "/rover_bt/status"
 
+    # ── Person tracker (PERSON_TRACK mode) ──
+    # enable is asserted only while in PERSON_TRACK; the follower publishes to
+    # /cmd_vel_person (mux'd below /cmd_vel_safe) and reports its coarse FSM state.
+    person_enable_topic: "/person_tracker/enable"
+    person_profile_topic: "/person_tracker/profile"
+    person_status_topic: "/person_tracker/status"
+
     # ── AMCL fallback ──
     amcl_pose_timeout: 2.0                      # seconds without AMCL → use odom
 
