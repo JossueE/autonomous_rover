@@ -28,6 +28,9 @@ from utils.utils import LoadModel
 COMMAND_MAP = {
     "emergencia": "emergency_stop",
     "reanuda": "resume",
+    "reanudar": "resume",
+    "continua": "resume",
+    "continúa": "resume",
     "avanza": "forward",
     "abanza": "forward",
     "adelante": "forward",
