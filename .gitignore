@@ -29,3 +29,6 @@ rover_bt/voice_assets/*
 # ── Editor / tooling ─────────────────────────────────────────────────────────
 .vscode/
 .codex
+
+#---------- Other files to ignore ----------
+odom_comparison/images/*
