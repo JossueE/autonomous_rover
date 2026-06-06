@@ -1,0 +1,40 @@
+trials:
+  straight_2m:
+    description: Straight 2 m forward segment using floor marks as final reference.
+    reference:
+      x_m: 2.0
+      y_m: 0.0
+      yaw_deg: 0.0
+    commands:
+      - duration_s: 8.0
+        linear_x: 0.25
+        angular_z: 0.0
+
+  yaw_sweep_90:
+    description: From zero, turn 90 deg left, return center, turn 90 deg right, return center.
+    reference:
+      x_m: 0.0
+      y_m: 0.0
+      yaw_deg: 0.0
+    commands:
+      - duration_s: 3.93
+        linear_x: 0.0
+        angular_z: 0.4
+      - duration_s: 3.93
+        linear_x: 0.0
+        angular_z: -0.4
+      - duration_s: 3.93
+        linear_x: 0.0
+        angular_z: -0.4
+      - duration_s: 3.93
+        linear_x: 0.0
+        angular_z: 0.4
+
+  free_run:
+    description: Free trajectory recorded until the operator stops the trial with Ctrl+C.
+    manual_stop: true
+    reference:
+      x_m: 0.0
+      y_m: 0.0
+      yaw_deg: 0.0
+    commands: []
