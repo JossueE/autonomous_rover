@@ -19,8 +19,9 @@ BT::PortsList CheckSensorHealth::providedPorts() {
         "After this, a sensor that never produced data is treated as stale."),
     BT::InputPort<bool>("require_moving", false,
         "If true, only escalate a stale sensor to FAILURE while the robot is "
-        "actually moving (|linear_vel| > moving_speed). Used for the wheel gate: "
-        "wheels going silent is only an emergency if we are trying to move."),
+        "actually moving (|linear_vel| > moving_speed). Optional gating; the wheel "
+        "power gate no longer uses it because the encoders publish continuously "
+        "while powered, so silence is an emergency at any speed."),
     BT::InputPort<double>("moving_speed", 0.05,
         "Speed threshold (m/s) above which the robot counts as moving, for require_moving."),
     BT::InputPort<double>("lost_debounce_sec", 1.0,

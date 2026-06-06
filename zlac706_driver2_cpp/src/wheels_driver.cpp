@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -135,85 +136,18 @@ public:
     serial_left_.open(motor_left_.port, motor_left_.baudrate);
     serial_right_.open(motor_right_.port, motor_right_.baudrate);
 
-    serial_left_.setCallback([this](const char *data, size_t len) {
-      motor_left_.received(data, static_cast<unsigned int>(len));
-    });
-    serial_right_.setCallback([this](const char *data, size_t len) {
-      motor_right_.received(data, static_cast<unsigned int>(len));
-    });
+    // Each serial RX callback also stamps the moment data last arrived from that
+    // driver. That timestamp is the wheel-liveness signal: the drivers answer our
+    // encoder polls ~50 Hz while powered, so a gap in RX means the e-stop button
+    // cut their power (or the serial link dropped). See wheel_ticks_timer().
+    register_serial_callbacks();
 
-    // ------------------------------
-    motor_left_.getParams();
-    serial_left_.write(motor_left_.gParams_msg);
+    const double init_now = steady_now();
+    last_rx_left_sec_.store(init_now);
+    last_rx_right_sec_.store(init_now);
 
-    motor_right_.getParams();
-    serial_right_.write(motor_right_.gParams_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    motor_left_.setSpeedMode();
-    serial_left_.write(motor_left_.spm_msg);
-
-    motor_right_.setSpeedMode();
-    serial_right_.write(motor_right_.spm_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    // Set the acceleration and deceleration time for velocity control mode
-    motor_left_.configAcc(
-        ms_to_zlac_units(accel_time_ms_, "Acceleration time"),
-        ms_to_zlac_units(decel_time_ms_, "Deceleration time"));
-    serial_left_.write(motor_left_.cfg_msg);
-
-    motor_right_.configAcc(
-        ms_to_zlac_units(accel_time_ms_, "Acceleration time"),
-        ms_to_zlac_units(decel_time_ms_, "Deceleration time"));
-    serial_right_.write(motor_right_.cfg_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    // Set the PID gains for velocity control mode
-    motor_left_.setGain(3, velocity_gains_.left.kp);
-    serial_left_.write(motor_left_.kpG_msg);
-
-    motor_right_.setGain(3, velocity_gains_.right.kp);
-    serial_right_.write(motor_right_.kpG_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    motor_left_.setGain(2, velocity_gains_.left.kf);
-    serial_left_.write(motor_left_.kdG_msg);
-
-    motor_right_.setGain(2, velocity_gains_.right.kf);
-    serial_right_.write(motor_right_.kdG_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    motor_left_.setGain(1, velocity_gains_.left.ki);
-    serial_left_.write(motor_left_.kiG_msg);
-
-    motor_right_.setGain(1, velocity_gains_.right.ki);
-    serial_right_.write(motor_right_.kiG_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    // Set speed to 0 m/s
-    motor_left_.setSpeed(0);
-    serial_left_.write(motor_left_.sSpeed_msg);
-
-    motor_right_.setSpeed(0);
-    serial_right_.write(motor_right_.sSpeed_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
-
-    // Start the motor
-    motor_left_.start();
-    serial_left_.write(motor_left_.str_msg);
-
-    motor_right_.start();
-    serial_right_.write(motor_right_.str_msg);
-
-    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+    // Configure speed mode, ramps, gains, zero speed and start both motors.
+    configure_and_start_motors();
 
     left_writer_ = std::make_unique<WheelWriter>(motor_left_, serial_left_);
     right_writer_ = std::make_unique<WheelWriter>(motor_right_, serial_right_);
@@ -276,6 +210,148 @@ private:
   std::unique_ptr<WheelWriter> left_writer_;
   std::unique_ptr<WheelWriter> right_writer_;
   bool idle_pending_{false};
+
+  // ── Wheel-driver power-loss detection + recovery ──────────────────────────
+  // Unlike the ZLAC8015D driver, this node previously republished the last
+  // encoder tick every cycle even with the drivers unpowered, so rover_bt could
+  // never tell the wheels had died. We now gate publishing on serial liveness:
+  // last_rx_*_sec_ is stamped (steady clock, seconds) by the RX callbacks, and
+  // wheel_ticks_timer only publishes while RX is fresh. When it goes silent we
+  // stop publishing (so rover_bt e-stops) and keep trying to bring the link and
+  // motors back so the wheels recover without a node restart.
+  std::atomic<double> last_rx_left_sec_{0.0};
+  std::atomic<double> last_rx_right_sec_{0.0};
+  bool comms_lost_{false};            // true while serial RX is stale
+  int stale_tick_count_{0};           // consecutive stale wheel_ticks_timer ticks
+  int recovery_tick_{0};              // paces serial-reopen attempts while lost
+  static constexpr double rx_timeout_s_ = 0.2;      // no RX for this long = stale
+  static constexpr int kCommsLostThreshold_ = 15;   // ~0.3 s @ 20 ms before declaring loss
+  static constexpr int kReconnectEveryTicks_ = 50;  // ~1 s @ 20 ms between reopen tries
+
+  static double steady_now() {
+    return std::chrono::duration<double>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  }
+
+  // (Re)attach the RX callbacks, each stamping its driver's last-RX time.
+  void register_serial_callbacks() {
+    serial_left_.setCallback([this](const char *data, size_t len) {
+      motor_left_.received(data, static_cast<unsigned int>(len));
+      last_rx_left_sec_.store(steady_now());
+    });
+    serial_right_.setCallback([this](const char *data, size_t len) {
+      motor_right_.received(data, static_cast<unsigned int>(len));
+      last_rx_right_sec_.store(steady_now());
+    });
+  }
+
+  // Full speed-mode/ramp/gain/start handshake for both motors. Used at startup
+  // and on recovery (a power-cycled ZLAC706 boots unconfigured and stopped). The
+  // inter-step sleeps give the drivers time to process each frame; blocking here
+  // is fine because it only runs at init or once on recovery while stopped.
+  void configure_and_start_motors() {
+    motor_left_.getParams();
+    serial_left_.write(motor_left_.gParams_msg);
+    motor_right_.getParams();
+    serial_right_.write(motor_right_.gParams_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    motor_left_.setSpeedMode();
+    serial_left_.write(motor_left_.spm_msg);
+    motor_right_.setSpeedMode();
+    serial_right_.write(motor_right_.spm_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    // Set the acceleration and deceleration time for velocity control mode
+    motor_left_.configAcc(ms_to_zlac_units(accel_time_ms_, "Acceleration time"),
+                          ms_to_zlac_units(decel_time_ms_, "Deceleration time"));
+    serial_left_.write(motor_left_.cfg_msg);
+    motor_right_.configAcc(ms_to_zlac_units(accel_time_ms_, "Acceleration time"),
+                           ms_to_zlac_units(decel_time_ms_, "Deceleration time"));
+    serial_right_.write(motor_right_.cfg_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    // Set the PID gains for velocity control mode
+    motor_left_.setGain(3, velocity_gains_.left.kp);
+    serial_left_.write(motor_left_.kpG_msg);
+    motor_right_.setGain(3, velocity_gains_.right.kp);
+    serial_right_.write(motor_right_.kpG_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    motor_left_.setGain(2, velocity_gains_.left.kf);
+    serial_left_.write(motor_left_.kdG_msg);
+    motor_right_.setGain(2, velocity_gains_.right.kf);
+    serial_right_.write(motor_right_.kdG_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    motor_left_.setGain(1, velocity_gains_.left.ki);
+    serial_left_.write(motor_left_.kiG_msg);
+    motor_right_.setGain(1, velocity_gains_.right.ki);
+    serial_right_.write(motor_right_.kiG_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    // Set speed to 0 RPM BEFORE starting so the motors never lurch on enable.
+    motor_left_.setSpeed(0);
+    serial_left_.write(motor_left_.sSpeed_msg);
+    motor_right_.setSpeed(0);
+    serial_right_.write(motor_right_.sSpeed_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+
+    // Start (enable) the motors
+    motor_left_.start();
+    serial_left_.write(motor_left_.str_msg);
+    motor_right_.start();
+    serial_right_.write(motor_right_.str_msg);
+    rclcpp::sleep_for(std::chrono::milliseconds(wait_time));
+  }
+
+  // Reopen a serial port that has closed or errored — e.g. the USB device
+  // disappeared when the drivers lost power. Cheap and safe to call repeatedly.
+  void reopen_port(CallbackAsyncSerial &serial, const std::string &port,
+                   bool is_left) {
+    if (serial.isOpen() && !serial.errorStatus()) {
+      return;  // still usable
+    }
+    try {
+      if (serial.isOpen()) {
+        serial.close();
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_WARN(rclcpp::get_logger(node_name), "Error closing %s port: %s",
+                  is_left ? "left" : "right", e.what());
+    }
+    try {
+      serial.open(port, baudrate_);
+      register_serial_callbacks();  // re-attach after reopening
+      RCLCPP_INFO(rclcpp::get_logger(node_name), "Reopened %s wheel port %s",
+                  is_left ? "left" : "right", port.c_str());
+    } catch (const std::exception &e) {
+      RCLCPP_WARN(rclcpp::get_logger(node_name),
+                  "Failed to reopen %s wheel port %s (drivers still "
+                  "unpowered?): %s",
+                  is_left ? "left" : "right", port.c_str(), e.what());
+    }
+  }
+
+  // Serial just came back after a loss. Stop the writer threads, re-run the full
+  // configuration from a zero-speed state (a power-cycled drive forgets it), then
+  // restart the writers so motion commands flow again.
+  void recover_motors() {
+    if (left_writer_) {
+      left_writer_->stop_thread();
+    }
+    if (right_writer_) {
+      right_writer_->stop_thread();
+    }
+
+    configure_and_start_motors();
+
+    left_writer_ = std::make_unique<WheelWriter>(motor_left_, serial_left_);
+    right_writer_ = std::make_unique<WheelWriter>(motor_right_, serial_right_);
+    left_writer_->start();
+    right_writer_->start();
+  }
 
   bool wheelR_is_backward_;
   bool wheelL_is_backward_;
@@ -366,8 +442,44 @@ private:
   }
 
   void wheel_ticks_timer() {
+    // Keep polling the drivers; responses arrive asynchronously on the RX
+    // callbacks and refresh last_rx_*_sec_.
     left_writer_->request_encoder();
     right_writer_->request_encoder();
+
+    const double now = steady_now();
+    const bool comms_ok =
+        (now - last_rx_left_sec_.load() <= rx_timeout_s_) &&
+        (now - last_rx_right_sec_.load() <= rx_timeout_s_);
+
+    if (!comms_ok) {
+      // No serial responses → the wheel drivers likely lost power (e-stop
+      // button) or the serial link dropped. Stop publishing so rover_bt sees the
+      // silence and e-stops, and periodically try to reopen the ports so the
+      // wheels come back on their own once power returns.
+      if (++stale_tick_count_ == kCommsLostThreshold_) {
+        comms_lost_ = true;
+        recovery_tick_ = 0;
+        RCLCPP_ERROR(rclcpp::get_logger(node_name),
+                     "Lost communication with the wheel drivers (no serial "
+                     "response). The driver power may have been cut. Retrying "
+                     "until it returns.");
+      }
+      if (comms_lost_ && (recovery_tick_++ % kReconnectEveryTicks_ == 0)) {
+        reopen_port(serial_left_, port_left_, /*is_left=*/true);
+        reopen_port(serial_right_, port_right_, /*is_left=*/false);
+      }
+      return;  // publish nothing while comms is down
+    }
+
+    // Comms healthy this tick.
+    if (comms_lost_) {
+      RCLCPP_INFO(rclcpp::get_logger(node_name),
+                  "Wheel driver communication restored. Re-enabling motors.");
+      recover_motors();
+      comms_lost_ = false;
+    }
+    stale_tick_count_ = 0;
 
     std_msgs::msg::Float64 msg_left_, msg_right_;
 

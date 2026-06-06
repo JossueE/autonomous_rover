@@ -33,15 +33,45 @@
           <Inverter name="NoEmergency">
             <CheckCommand expected="emergency_stop"/>
           </Inverter>
-          <!-- Emergency detected → stop everything. Mark this as a NON-odom
-               emergency so EMERGENCY does not auto-resume: a commanded e-stop
-               always requires an explicit 'resume'. -->
+          <!-- Emergency detected → stop everything. Mark this as a NON-odom,
+               NON-wheel emergency so EMERGENCY does not auto-resume: a commanded
+               e-stop always requires an explicit 'resume'. -->
           <Sequence name="DoEmergency">
             <ZeroTwist/>
             <SetMode mode="EMERGENCY"/>
             <SetFlag flag="emergency_from_odom" value="false"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
             <Speak message="Parada de emergencia activada desde el botón de emergencia."/>
             <ClearCommand/>
+          </Sequence>
+        </Fallback>
+
+        <!-- Wheel-driver power loss → e-stop, regardless of motion. The wheel
+             encoders publish continuously at ~50 Hz whenever the drivers are
+             powered (the driver only skips publishing when a register read
+             fails), so silence means the e-stop button cut power to the wheel
+             drivers (or a serial fault) — dangerous at any speed because the
+             wheels can no longer hold position. Checked BEFORE the odom gate: a
+             power cut also drops RTAB-Map odometry, so the wheel loss is the root
+             cause. We announce the wheels and suppress the downstream "odometry
+             lost" message. The spoken alert is edge-gated on emergency_from_wheels
+             so it is said once, not every tick while the button stays pressed.
+             emergency_from_wheels also lets EMERGENCY auto-resume once the wheels
+             report again (button released / power restored). -->
+        <Fallback name="WheelPowerGate">
+          <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+          <Sequence name="WheelsLostEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <!-- Speak only on the first tick of the loss (edge-trigger). -->
+            <Fallback name="AnnounceWheelsOnce">
+              <CheckFlag flag="emergency_from_wheels"/>
+              <Sequence name="FirstWheelsAlert">
+                <SetFlag flag="emergency_from_wheels" value="true"/>
+                <Speak message="Ruedas sin energía. Esperando reconexión de los motores."/>
+              </Sequence>
+            </Fallback>
           </Sequence>
         </Fallback>
 
@@ -49,29 +79,26 @@
         <Fallback name="CriticalSensorGate">
           <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"
                              lost_debounce_sec="1.0"/>
-          <!-- Tag the emergency as odom-caused so EMERGENCY can auto-resume once
-               RTAB-Map odometry recovers (relocalizes), without a manual 'resume'. -->
-          <Sequence name="OdomLostEmergency">
-            <ZeroTwist/>
-            <SetMode mode="EMERGENCY"/>
-            <SetFlag flag="emergency_from_odom" value="true"/>
-            <Speak message="Odometría perdida. Parada de emergencia."/>
-          </Sequence>
-        </Fallback>
-
-        <!-- Wheel encoders gone silent → e-stop, but ONLY while moving. At idle
-             the wheels are simply not reporting and that is not dangerous; the
-             warn-only watchdog below still surfaces it in status. require_moving
-             uses /rtabmap/odom velocity as an independent witness of motion. -->
-        <Fallback name="WheelCriticalGate">
-          <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"
-                             require_moving="true" moving_speed="0.05"/>
-          <Sequence name="WheelsLostEmergency">
-            <ZeroTwist/>
-            <SetMode mode="EMERGENCY"/>
-            <SetFlag flag="emergency_from_odom" value="false"/>
-            <Speak message="Ruedas sin respuesta. Parada de emergencia."/>
-          </Sequence>
+          <Fallback name="OdomLostHandler">
+            <!-- If the wheels are ALSO dead, WheelPowerGate already e-stopped and
+                 announced it; this odom loss is just a symptom of the power cut,
+                 so suppress this branch (no duplicate emergency, no "odometría
+                 perdida"). A stale motor with on_fail=error returns FAILURE, which
+                 the Inverter turns into SUCCESS → the Fallback short-circuits. -->
+            <Inverter name="WheelsAreTheCause">
+              <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+            </Inverter>
+            <!-- Genuine odom loss with the wheels still alive. Tag it as
+                 odom-caused so EMERGENCY can auto-resume once RTAB-Map odometry
+                 recovers (relocalizes), without a manual 'resume'. -->
+            <Sequence name="OdomLostEmergency">
+              <ZeroTwist/>
+              <SetMode mode="EMERGENCY"/>
+              <SetFlag flag="emergency_from_odom" value="true"/>
+              <SetFlag flag="emergency_from_wheels" value="false"/>
+              <Speak message="Odometría perdida. Parada de emergencia."/>
+            </Sequence>
+          </Fallback>
         </Fallback>
       </Sequence>
 
@@ -173,9 +200,28 @@
             <SetMode mode="IDLE"/>
             <Speak message="Odometría recuperada. Operación reanudada."/>
           </Sequence>
+          <!-- Auto-recover from a wheel-power-loss emergency once the wheel
+               encoders report fresh data again (button released / drivers
+               re-powered and re-enabled). Only fires when the emergency was
+               caused by the wheels (emergency_from_wheels=true); commanded e-stops
+               and odom-loss e-stops clear that flag. The Safety layer's
+               WheelPowerGate re-asserts EMERGENCY every tick while the wheels are
+               silent, so this branch can only win on a tick where the wheels have
+               genuinely come back. If odom is still lost at that point, the odom
+               gate immediately re-asserts EMERGENCY (now correctly tagged as
+               odom-caused), so safety is preserved. -->
+          <Sequence name="AutoResumeFromWheels">
+            <CheckFlag flag="emergency_from_wheels"/>
+            <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Ruedas recuperadas. Operación reanudada."/>
+          </Sequence>
           <Sequence name="ResumeFromEmergency">
             <CheckCommand expected="resume"/>
             <SetFlag flag="emergency_from_odom" value="false"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
             <SetMode mode="IDLE"/>
             <Speak message="Operación reanudada."/>
             <ClearCommand/>
