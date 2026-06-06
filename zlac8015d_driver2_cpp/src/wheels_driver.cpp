@@ -184,10 +184,50 @@ private:
   int decel_time_ms_;
   bool unlock_driver_;
   double time_disabled_driver_s_;
-  VelocityGains velocity_gains_;  
+  VelocityGains velocity_gains_;
   ResolutionMode resolution_mode_;
   const std::string port_;
   ZLAC8015D motors_;
+
+  // ── Wheel-driver power-loss recovery ──────────────────────────────────────
+  // The e-stop button can cut electricity to the wheel drivers. When that
+  // happens the encoder reads start failing and we stop publishing wheel data
+  // (rover_bt detects the silence and e-stops). These track that state so the
+  // node heals itself once power is restored instead of needing a restart:
+  // we keep retrying the serial link and, when it comes back, re-enable the
+  // motors from a known-safe (zero-speed) state.
+  bool comms_lost_{false};          // true while encoder reads are failing
+  int read_fail_count_{0};          // consecutive failed encoder reads
+  int recovery_tick_{0};            // paces reconnect attempts while lost
+  static constexpr int kCommsLostThreshold_ = 15;   // ~0.3 s @ 20 ms before declaring loss
+  static constexpr int kReconnectEveryTicks_ = 50;  // ~1 s @ 20 ms between reconnect tries
+
+  // Bring the drive back to a safe, enabled state after a power cycle: clear any
+  // latched alarm, re-apply ramps/gains (a power-cycled drive boots with
+  // defaults) and command zero speed BEFORE enabling so it never lurches.
+  void reinitialize_motors() {
+    motors_.reset_alarm();
+    motors_.set_accel_time(accel_time_ms_);
+    motors_.set_decel_time(decel_time_ms_);
+    motors_.set_control_gains_velocity(velocity_gains_);
+    motors_.set_sync_rpm(0.0, 0.0, resolution_mode_);
+    motors_.enable_motor();
+  }
+
+  // Tear down the (possibly stale/dead) serial handle and try to open it again.
+  // Covers the case where the USB-serial device disappears with the driver
+  // power: a fresh connect() reopens the port and re-enables the motors.
+  void attempt_reconnect() {
+    RCLCPP_WARN(rclcpp::get_logger(node_name), "Attempting to reconnect to the wheel drivers...");
+    motors_.disconnect();           // frees the stale modbus context (client_ -> null)
+    if (motors_.connect()) {        // reopens the port, sets mode + enables motor
+      reinitialize_motors();
+      RCLCPP_INFO(rclcpp::get_logger(node_name), "Reconnected to the wheel drivers.");
+    } else {
+      RCLCPP_WARN(rclcpp::get_logger(node_name),
+                  "Reconnect attempt failed (drivers still unpowered?). Will retry.");
+    }
+  }
 
   rcl_interfaces::msg::SetParametersResult on_params_change(const std::vector<rclcpp::Parameter> &params){
     rcl_interfaces::msg::SetParametersResult result;
@@ -417,16 +457,48 @@ private:
 
     std_msgs::msg::Float64 msg_left_, msg_right_;
     auto [count_left, count_right, status_flag] = motors_.get_encoder_count();
-    if (!status_flag){
-      RCLCPP_WARN(rclcpp::get_logger(node_name), "A problem was detected reading the Encoder Count, this value will be skipped");
-    }
-    else{
-      msg_left_.data  = static_cast<double>(count_left);
-      msg_right_.data = static_cast<double>(count_right);
 
-      pub_left_data_->publish(msg_left_);
-      pub_right_data_->publish(msg_right_);
+    if (!status_flag){
+      // Encoder read failed. A few failures in a row is normal noise; a sustained
+      // run means the wheel drivers lost power (e-stop button) or the serial link
+      // dropped. Stop publishing so rover_bt sees the silence and e-stops, and
+      // keep trying to bring the link back so the wheels recover on their own.
+      if (++read_fail_count_ >= kCommsLostThreshold_ && !comms_lost_) {
+        comms_lost_ = true;
+        recovery_tick_ = 0;
+        RCLCPP_ERROR(rclcpp::get_logger(node_name),
+          "Lost communication with the wheel drivers (encoder reads failing). "
+          "The driver power may have been cut. Retrying until it returns.");
+      }
+      if (comms_lost_) {
+        if (recovery_tick_ % kReconnectEveryTicks_ == 0) {
+          attempt_reconnect();
+        }
+        ++recovery_tick_;
+      } else {
+        RCLCPP_WARN(rclcpp::get_logger(node_name),
+          "A problem was detected reading the Encoder Count, this value will be skipped");
+      }
+      return;
     }
+
+    // Reads are working again.
+    if (comms_lost_) {
+      // Link just recovered (power restored). Re-enable the motors from a
+      // zero-speed state so the rover can move again; rover_bt auto-resumes from
+      // EMERGENCY once these encoder messages start flowing.
+      RCLCPP_INFO(rclcpp::get_logger(node_name),
+        "Wheel driver communication restored. Re-enabling motors.");
+      reinitialize_motors();
+      comms_lost_ = false;
+    }
+    read_fail_count_ = 0;
+
+    msg_left_.data  = static_cast<double>(count_left);
+    msg_right_.data = static_cast<double>(count_right);
+
+    pub_left_data_->publish(msg_left_);
+    pub_right_data_->publish(msg_right_);
   }
   
   void command_vel_CB(const geometry_msgs::msg::Twist::SharedPtr msg){
