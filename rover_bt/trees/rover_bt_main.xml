@@ -40,7 +40,7 @@
             <ZeroTwist/>
             <SetMode mode="EMERGENCY"/>
             <SetFlag flag="emergency_from_odom" value="false"/>
-            <Speak message="Parada de emergencia activada"/>
+            <Speak message="Parada de emergencia activada desde el botón de emergencia."/>
             <ClearCommand/>
           </Sequence>
         </Fallback>
