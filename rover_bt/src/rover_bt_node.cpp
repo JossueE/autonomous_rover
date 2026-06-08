@@ -140,7 +140,8 @@ void RoverBTNode::init_subsystems() {
     tts_ = std::make_unique<TTSClient>(this, this->get_logger(), tts_topic);
   }
 
-  // Create SharedContext
+  // SharedContext is the BT's view of the node: a non-owning shared_ptr back to
+  // this node plus raw pointers to the subsystems the leaf nodes reach through.
   ctx_ = std::make_shared<SharedContext>();
   ctx_->node = std::shared_ptr<rclcpp::Node>(this, [](rclcpp::Node*) {}); // non-owning shared_ptr
   ctx_->arbitrator = arbitrator_.get();
@@ -286,7 +287,6 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<SetPersonProfile>("SetPersonProfile");
   factory_.registerNodeType<ResetOdom>("ResetOdom");
 
-  // Load XML
   std::string xml_path = this->get_parameter("tree_xml").as_string();
   if (xml_path.empty()) {
     std::string share_dir = ament_index_cpp::get_package_share_directory("rover_bt");
@@ -321,7 +321,7 @@ void RoverBTNode::init_behavior_tree() {
   monitor_lidar_        = this->get_parameter("monitor_lidar").as_bool();
   monitor_wheels_       = this->get_parameter("monitor_wheels").as_bool();
 
-  // Tick timer (10Hz)
+  // BT tick timer; rate is param-driven (bt_tick_rate, default 10 Hz).
   double tick_rate = this->get_parameter("bt_tick_rate").as_double();
   auto period = std::chrono::duration<double>(1.0 / tick_rate);
   tick_timer_ = this->create_wall_timer(period, std::bind(&RoverBTNode::tick_tree, this));
@@ -332,7 +332,6 @@ void RoverBTNode::init_behavior_tree() {
 }
 
 void RoverBTNode::tick_tree() {
-  // Tick tree exactly once
   tree_.tickExactlyOnce();
 
   // Drive the person-tracker enable from the (single source of truth) mode every
@@ -512,12 +511,13 @@ void RoverBTNode::on_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr 
 void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
   ctx_->last_odom_time.store(to_seconds(msg->header.stamp));
 
-  // Extract pose info
   double x = msg->pose.pose.position.x;
   double y = msg->pose.pose.position.y;
   double yaw = quat_to_yaw(msg->pose.pose.orientation);
 
-  // Update only if pose source is still odom
+  // Only let raw odom drive the pose while it's the active source; once AMCL/map
+  // localization takes over (pose_source="map") its poses win and odom is
+  // ignored for pose (we still always update linear velocity below).
   std::lock_guard<std::mutex> lock(ctx_->pose_source_mutex);
   if (ctx_->pose_source == "odom") {
     ctx_->robot_x.store(x);

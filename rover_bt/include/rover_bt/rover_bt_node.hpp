@@ -36,6 +36,24 @@
 
 namespace rover_bt {
 
+/**
+ * @brief The rover's top-level behaviour-tree node: owns the BT, its shared
+ *        subsystems, and the ROS I/O that feeds and drives them.
+ *
+ * Responsibilities:
+ *   - bridge ROS → BT: sensor/pose/command callbacks stamp liveness timestamps
+ *     and pose into the SharedContext, and enqueue commands into the
+ *     CommandArbitrator, all consumed by the tree on its tick timer;
+ *   - bridge BT → ROS: tick the tree at bt_tick_rate, publish cmd_vel, the
+ *     person-tracker enable (driven from `mode` every tick), and a ~1 Hz
+ *     RoverStatus with per-sensor health;
+ *   - own the subsystems (CommandArbitrator, LocationRegistry, TTSClient) that
+ *     the BT leaf nodes reach through the SharedContext.
+ *
+ * Threading: ROS callbacks and the tick/status timers run on the node's
+ * executor; shared state lives in SharedContext atomics, so the tree never
+ * blocks on I/O.
+ */
 class RoverBTNode : public rclcpp::Node {
 public:
   RoverBTNode();
