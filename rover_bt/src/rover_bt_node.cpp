@@ -27,6 +27,7 @@
 #include "rover_bt/nodes/actions/save_location.hpp"
 #include "rover_bt/nodes/actions/process_command.hpp"
 #include "rover_bt/nodes/actions/set_person_profile.hpp"
+#include "rover_bt/nodes/actions/reset_odom.hpp"
 
 #include <behaviortree_cpp/controls/switch_node.h>
 
@@ -47,6 +48,10 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("odom_topic", "/odom");
   this->declare_parameter("rtabmap_odom_info_topic", "/rtabmap/odom_info_lite");
   this->declare_parameter("amcl_pose_topic", "/amcl_robot_pose");
+  // RTAB-Map publishes localization_pose each time it relocalizes against the
+  // prior map (localization mode). The odom-loss recovery routine watches it to
+  // confirm the robot is genuinely back on the map after a reset_odom nudge.
+  this->declare_parameter("localization_pose_topic", "/rtabmap/localization_pose");
   this->declare_parameter("scan_topic", "/scan");
   this->declare_parameter("pointcloud_topic", "/k4a/points2");
   // IMU is the Azure Kinect DK's onboard IMU (raw device output), not the old
@@ -196,6 +201,11 @@ void RoverBTNode::init_ros_interfaces() {
   amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     amcl_pose_topic, 10, std::bind(&RoverBTNode::on_amcl_pose, this, std::placeholders::_1));
 
+  std::string localization_pose_topic = this->get_parameter("localization_pose_topic").as_string();
+  localization_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    localization_pose_topic, 10,
+    std::bind(&RoverBTNode::on_localization_pose, this, std::placeholders::_1));
+
   std::string scan_topic = this->get_parameter("scan_topic").as_string();
   lidar_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
     scan_topic, 10, std::bind(&RoverBTNode::on_laser_scan, this, std::placeholders::_1));
@@ -274,6 +284,7 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<SaveLocation>("SaveLocation");
   factory_.registerNodeType<ProcessCommand>("ProcessCommand");
   factory_.registerNodeType<SetPersonProfile>("SetPersonProfile");
+  factory_.registerNodeType<ResetOdom>("ResetOdom");
 
   // Load XML
   std::string xml_path = this->get_parameter("tree_xml").as_string();
@@ -297,6 +308,7 @@ void RoverBTNode::init_behavior_tree() {
   blackboard->set("patrol_index", -1);
   blackboard->set("patrol_waypoint", std::string(""));
   blackboard->set("recovery_attempted", false);
+  blackboard->set("odom_relocalized", false);
   blackboard->set("active_command_source", std::string(""));
   blackboard->set("goal_distance", -1.0);
 
@@ -550,6 +562,16 @@ void RoverBTNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamp
   ctx_->robot_x.store(x);
   ctx_->robot_y.store(y);
   ctx_->robot_theta.store(yaw);
+}
+
+void RoverBTNode::on_localization_pose(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr /*msg*/) {
+  // A message here = RTAB-Map successfully matched the robot to the prior map
+  // (a relocalization). We only need the timing, not the pose: stamp node-clock
+  // receive time so the odom-recovery routine can tell a relocalization that
+  // happened AFTER a loss/reset from a stale one. RTAB-Map stalls while
+  // odometry is lost, so this naturally stops updating during the loss.
+  ctx_->last_localization_time.store(this->get_clock()->now().seconds());
 }
 
 void RoverBTNode::on_trajectory(const nav_msgs::msg::Path::SharedPtr msg) {

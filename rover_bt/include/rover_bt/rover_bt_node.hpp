@@ -55,6 +55,7 @@ private:
   void on_imu(const sensor_msgs::msg::Imu::SharedPtr msg);
   void on_wheel_data(const std_msgs::msg::Float64::SharedPtr msg);
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+  void on_localization_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void on_trajectory(const nav_msgs::msg::Path::SharedPtr msg);
   void on_command(const rover_bt::msg::Command::SharedPtr msg);
   void on_joy(const sensor_msgs::msg::Joy::SharedPtr msg);
@@ -101,6 +102,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_left_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_right_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr localization_pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<rover_bt::msg::Command>::SharedPtr command_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
