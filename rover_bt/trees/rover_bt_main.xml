@@ -77,8 +77,8 @@
 
         <!-- Critical sensor check: odom loss = e-stop -->
         <Fallback name="CriticalSensorGate">
-          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"
-                             lost_debounce_sec="1.0"/>
+          <CheckSensorHealth sensor="odom" max_stale_sec="8.0" on_fail="error"
+                             lost_debounce_sec="4.0"/>
           <Fallback name="OdomLostHandler">
             <!-- If the wheels are ALSO dead, WheelPowerGate already e-stopped and
                  announced it; this odom loss is just a symptom of the power cut,
@@ -197,6 +197,7 @@
           <Sequence name="AutoResumeFromOdom">
             <CheckFlag flag="emergency_from_odom"/>
             <CheckFlag flag="odom_relocalized"/>
+            <CheckSensorHealth sensor="odom" max_stale_sec="8.0" on_fail="error"/>
             <SetFlag flag="emergency_from_odom" value="false"/>
             <SetFlag flag="odom_relocalized" value="false"/>
             <ZeroTwist/>
