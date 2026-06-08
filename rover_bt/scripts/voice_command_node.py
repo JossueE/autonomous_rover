@@ -72,11 +72,55 @@ COMMAND_MAP = {
     "sigueme": "person_track",
 }
 
+COURTESY_PREFIXES = [
+    "por favor",
+    "de favor",
+    "favor de",
+    "porfa",
+    "porfas",
+    "porfis",
+    "oye",
+    "oiga",
+    "hola",
+    "buenos dias",
+    "buenas tardes",
+    "buenas noches",
+    "disculpa",
+    "perdon",
+    "perdoname",
+    "puedes",
+    "puede",
+    "podrias",
+    "podria",
+    "me puedes",
+    "me puede",
+    "me podrias",
+    "me podria",
+    "quiero que",
+    "necesito que",
+    "te encargo",
+]
+
+FILLER_WORDS = {
+    "eh",
+    "em",
+    "este",
+    "mmm",
+    "pues",
+}
+
+FILLER_PHRASES = {
+    "a ver",
+}
+
+COMMAND_CONNECTORS_RE = re.compile(r"\b(?:y luego|luego|despues|después|entonces)\b", re.IGNORECASE)
+
 NAVIGATE_PREFIXES = [
     "ve a", "ir a", "ve para", "ir para", "ve hacia", "ir hacia",
     "navega a", "navega para", "navega hacia",
     "dirígete a", "dirigete a", "dirígete para", "dirigete para",
     "dirígete hacia", "dirigete hacia",
+    "llevame a", "llévame a", "llevarme a", "mandame a", "mándame a",
 ]
 
 SAVE_PREFIXES = [
@@ -206,8 +250,68 @@ def strip_wake_words(text: str, variants: list[str]) -> str:
     return cleaned
 
 
+def strip_courtesy(text: str) -> str:
+    cleaned = text.strip(" .,!¡¿?")
+    changed = True
+    while changed:
+        changed = False
+        normalized = normalize_text(cleaned)
+        for prefix in sorted(COURTESY_PREFIXES, key=len, reverse=True):
+            needle = normalize_text(prefix)
+            if normalized == needle:
+                return ""
+            if normalized.startswith(needle + " "):
+                cleaned = cleaned[len(prefix):].strip(" .,!¡¿?")
+                changed = True
+                break
+        if changed:
+            continue
+        padded = f" {normalized} "
+        for phrase in sorted(FILLER_PHRASES, key=len, reverse=True):
+            needle = normalize_text(phrase)
+            if f" {needle} " in padded:
+                cleaned = re.sub(rf"(?i)(^|\s+){re.escape(phrase)}(?=\s+|$)", " ", cleaned)
+                cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!¡¿?")
+                changed = True
+                break
+
+    words = cleaned.split()
+    filtered = [word for word in words if normalize_text(word) not in FILLER_WORDS]
+    return " ".join(filtered).strip(" .,!¡¿?")
+
+
+def command_clauses(text: str) -> list[str]:
+    parts = COMMAND_CONNECTORS_RE.split(text)
+    clauses = [strip_courtesy(part) for part in parts]
+    return [clause for clause in clauses if clause]
+
+
+def contains_normalized_phrase(text: str, phrase: str) -> bool:
+    nt = f" {normalize_text(text)} "
+    needle = normalize_text(phrase)
+    return bool(needle) and f" {needle} " in nt
+
+
+def normalized_tail_after_phrase(text: str, phrase: str) -> Optional[str]:
+    normalized = normalize_text(text)
+    needle = normalize_text(phrase)
+    if not needle:
+        return None
+
+    padded = f" {normalized} "
+    token = f" {needle} "
+    index = padded.find(token)
+    if index < 0:
+        return None
+    return padded[index + len(token):].strip()
+
+
 def parse_speech_command(text: str, waypoint_names: list[str]) -> tuple[Optional[str], Optional[str]]:
     """Return (command_str, target_or_None) from a transcription."""
+    if not text:
+        return None, None
+
+    text = strip_courtesy(text)
     if not text:
         return None, None
 
@@ -215,7 +319,7 @@ def parse_speech_command(text: str, waypoint_names: list[str]) -> tuple[Optional
     t = normalize_text(raw)
 
     for alias in EMERGENCY_ALIASES:
-        if normalize_text(alias) in t:
+        if contains_normalized_phrase(t, alias):
             return EMERGENCY_COMMAND, None
 
     for prefix in sorted(SAVE_PREFIXES, key=len, reverse=True):
@@ -230,10 +334,10 @@ def parse_speech_command(text: str, waypoint_names: list[str]) -> tuple[Optional
                 return "save_location", tail
             return None, None
 
-    for prefix in NAVIGATE_PREFIXES:
-        normalized_prefix = normalize_text(prefix)
-        if t.startswith(normalized_prefix + " ") or t == normalized_prefix:
-            tail = strip_articles(raw[len(prefix):])
+    for prefix in sorted(NAVIGATE_PREFIXES, key=len, reverse=True):
+        tail = normalized_tail_after_phrase(raw, prefix)
+        if tail is not None:
+            tail = strip_articles(tail)
             resolved = resolve_waypoint_alias(tail, waypoint_names)
             if resolved:
                 return "navigate", resolved
@@ -242,7 +346,7 @@ def parse_speech_command(text: str, waypoint_names: list[str]) -> tuple[Optional
             return None, None
 
     for key in sorted(COMMAND_MAP, key=len, reverse=True):
-        if normalize_text(key) in t:
+        if contains_normalized_phrase(t, key):
             return COMMAND_MAP[key], None
 
     return None, None
@@ -256,8 +360,8 @@ class VoiceCommandNode(Node):
         from ament_index_python.packages import get_package_share_directory
         share = get_package_share_directory("rover_bt")
 
-        self.declare_parameter("wake_word", "ok robot")
-        self.declare_parameter("wake_variants", ["ok robot", "okay robot", "hey robot"])
+        self.declare_parameter("wake_word", "comando")
+        self.declare_parameter("wake_variants", ["comando"])
         self.declare_parameter("wake_timeout_sec", 10.0)
         self.declare_parameter("stt_model_name", "base")
         self.declare_parameter(
@@ -413,11 +517,16 @@ class VoiceCommandNode(Node):
 
         text = strip_wake_words(text, self.wake_variants)
         self.get_logger().info(f"[stt] heard: '{text}'")
-        cmd, target = parse_speech_command(text, self.waypoint_names)
+        clauses = command_clauses(text)
+        if not clauses:
+            clauses = [text]
 
-        if cmd:
-            self._publish(cmd, target)
-            return
+        for clause in clauses:
+            cmd, target = parse_speech_command(clause, self.waypoint_names)
+            if cmd:
+                self.get_logger().info(f"[voice] matched clause: '{clause}'")
+                self._publish(cmd, target)
+                return
 
         self.get_logger().info("[voice] No command matched; wake word required again.")
 

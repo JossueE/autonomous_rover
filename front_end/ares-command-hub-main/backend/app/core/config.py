@@ -20,7 +20,7 @@ MAP_IMAGE_MAX_WIDTH = 700
 MAP_IMAGE_MAX_HEIGHT = 700
 JPEG_QUALITY = 50
 HEAVY_TOPIC_MIN_INTERVALS = {
-    "camera": 1.0 / 12.0,
+    "camera": 0.2,
     "depth": 0.2,
     "map": 0.5,
     "pointcloud": 0.5,
@@ -30,16 +30,9 @@ TELEMETRY_VIDEO_FALLBACK = f"http://{API_HOST}:{API_PORT}/static/demo.mp4"
 
 DEFAULT_TOPICS: tuple[TopicSpec, ...] = (
     TopicSpec("/k4a/rgb/image_raw/compressed", "sensor_msgs/msg/CompressedImage", "camera"),
-    TopicSpec("/k4a/depth_to_rgb/image_raw", "sensor_msgs/msg/Image", "depth"),
     TopicSpec("/k4a/rgb/camera_info", "sensor_msgs/msg/CameraInfo", "camera_info"),
     TopicSpec("/rtabmap/odom", "nav_msgs/msg/Odometry", "odom"),
     TopicSpec("/k4a/imu_filtered", "sensor_msgs/msg/Imu", "imu"),
-    TopicSpec("/rtabmap/grid_prob_map", "nav_msgs/msg/OccupancyGrid", "map"),
-    TopicSpec("/sdv_trajectory", "nav_msgs/msg/Path", "path"),
-    TopicSpec("/k4a/points2", "sensor_msgs/msg/PointCloud2", "pointcloud"),
-    TopicSpec("/points_rotated_notground", "sensor_msgs/msg/PointCloud2", "pointcloud"),
-    TopicSpec("/depth_camera/points", "sensor_msgs/msg/PointCloud2", "pointcloud"),
-    TopicSpec("/rtabmap/cloud_obstacles", "sensor_msgs/msg/PointCloud2", "pointcloud"),
     TopicSpec("/all_available_paths", "visualization_msgs/msg/MarkerArray", "markers"),
     TopicSpec("/scan", "sensor_msgs/msg/LaserScan", "scan"),
     TopicSpec("/goal_pose", "geometry_msgs/msg/PoseStamped", "goal"),

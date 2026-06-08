@@ -163,11 +163,11 @@ ros2 launch path_planning_dynamic planning.launch.py
 Backend A.R.E.S. Command Hub:
 
 ```bash
-cd /home/snorlix/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main/backend
+cd ~/colcon_ws/src/autonomous_rover/front_end/ares-command-hub-main/backend
 export PYTHONNOUSERSITE=1
 source /opt/ros/jazzy/setup.bash
-source /home/snorlix/colcon_ws/install/setup.bash
-python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+source ~/colcon_ws/install/setup.bash
+nice -n 10 python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 
