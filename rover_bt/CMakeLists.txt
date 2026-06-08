@@ -18,6 +18,7 @@ find_package(behaviortree_cpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rtabmap_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -64,6 +65,7 @@ set(BT_ACTION_SOURCES
   src/nodes/actions/save_location.cpp
   src/nodes/actions/process_command.cpp
   src/nodes/actions/set_person_profile.cpp
+  src/nodes/actions/reset_odom.cpp
 )
 
 set(CORE_SOURCES
@@ -93,6 +95,7 @@ set(ROVER_BT_DEPS
   geometry_msgs
   nav_msgs
   std_msgs
+  std_srvs
   sensor_msgs
   rtabmap_msgs
   tf2_ros
