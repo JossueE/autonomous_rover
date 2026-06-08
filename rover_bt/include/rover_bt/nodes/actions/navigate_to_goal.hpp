@@ -42,6 +42,9 @@ private:
   std::atomic<bool> goal_accepted_{false};
   std::atomic<bool> goal_completed_{false};
   std::atomic<bool> goal_failed_{false};
+  // Monotonic token bumped on every dispatch/cancel. Each goal's callbacks
+  // capture the token they were issued under and no-op once it advances, so a
+  // preempted goal can never mutate state belonging to its replacement.
   std::atomic<uint64_t> goal_sequence_{0};
 
   std::string target_location_;
