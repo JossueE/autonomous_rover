@@ -94,9 +94,15 @@
             <Sequence name="OdomLostEmergency">
               <ZeroTwist/>
               <SetMode mode="EMERGENCY"/>
-              <SetFlag flag="emergency_from_odom" value="true"/>
               <SetFlag flag="emergency_from_wheels" value="false"/>
-              <Speak message="Odometría perdida. Parada de emergencia."/>
+              <!-- Speak only on the first tick of the loss (edge-trigger). -->
+              <Fallback name="AnnounceOdomOnce">
+                <CheckFlag flag="emergency_from_odom"/>
+                <Sequence name="FirstOdomAlert">
+                  <SetFlag flag="emergency_from_odom" value="true"/>
+                  <Speak message="Odometría perdida. Parada de emergencia."/>
+                </Sequence>
+              </Fallback>
             </Sequence>
           </Fallback>
         </Fallback>
