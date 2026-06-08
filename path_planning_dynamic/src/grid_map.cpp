@@ -30,9 +30,9 @@ Grid_map::Grid_map(const nav_msgs::msg::OccupancyGrid &map_data)
 
     // Loop through the occupancy grid to populate the obstacle map
     auto mapDataIter = map_data_.data.begin();
-    for (unsigned int y = 0; y < map_.getSize()(1); ++y)
+    for (int y = 0; y < map_.getSize()(1); ++y)
     {
-        for (unsigned int x = 0; x < map_.getSize()(0); ++x)
+        for (int x = 0; x < map_.getSize()(0); ++x)
         {
             if (*mapDataIter > free_thres_ || *mapDataIter < 0)
             {

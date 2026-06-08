@@ -1,0 +1,37 @@
+robots:
+  zlac8015d:
+    driver_package: zlac8015d_driver2_cpp
+    driver_ports:
+      motors_port: /dev/ttyUSB0
+    wheels_separation: 0.35
+    wheel_radius: 0.06
+    max_linear_vel: 0.3   # m/s — shared limit for teleop + NMPC
+    max_angular_vel: 0.8  # rad/s
+    camera_x: 0.115
+    camera_z: 0.43
+    camera_pitch: 0.0
+    map_path: package://rover_bringup/maps/test1.osm
+    pointcloud_roi:
+      roi_max_y_: 0.35
+    nmpc:
+      L: 0.35
+      v_max: 0.3
+
+  zlac706:
+    driver_package: zlac706_driver2_cpp
+    driver_ports:
+      motor_left_port: /dev/ttyUSB0
+      motor_right_port: /dev/ttyUSB1
+    wheels_separation: 0.315
+    wheel_radius: 0.095
+    max_linear_vel: 0.3   # m/s — shared limit for teleop + NMPC
+    max_angular_vel: 0.8  # rad/s
+    camera_x: 0.23
+    camera_z: 0.20
+    camera_pitch: 0.0
+    map_path: package://rover_bringup/maps/test_706.osm
+    pointcloud_roi:
+      roi_max_y_: 0.20
+    nmpc:
+      L: 0.315
+      v_max: 0.3

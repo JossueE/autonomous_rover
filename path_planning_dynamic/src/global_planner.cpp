@@ -2,15 +2,467 @@
 
 #include <lanelet2_io/Io.h>
 #include <rclcpp/clock.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <functional>
 #include <limits>
 #include <queue>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
-using lanelet::Optional;
+namespace
+{
+constexpr double kEndpointConnectDist = 1.5;
+constexpr double kLateralChangePenalty = 2.0;
+constexpr double kLaneletNearestFallbackDist = 1.0;
+constexpr double kPolygonBoundaryTolerance = 0.05;
+constexpr double kMaxLateralHeadingDiff = 1.5707963267948966;
+constexpr double kStartReverseHeadingPenalty = 5.0;
+
+struct LaneletGeometry
+{
+    lanelet::ConstLanelet lanelet;
+    lanelet::ConstLineString3d centerline;
+    double length = 0.0;
+};
+
+struct OrientedLaneletState
+{
+    lanelet::Id id;
+    bool reversed;
+
+    bool operator==(const OrientedLaneletState &other) const noexcept
+    {
+        return id == other.id && reversed == other.reversed;
+    }
+};
+
+struct OrientedLaneletStateHash
+{
+    std::size_t operator()(const OrientedLaneletState &state) const noexcept
+    {
+        const auto id_hash = std::hash<lanelet::Id>{}(state.id);
+        const auto reverse_hash = std::hash<bool>{}(state.reversed);
+        return id_hash ^ (reverse_hash + 0x9e3779b9 + (id_hash << 6) + (id_hash >> 2));
+    }
+};
+
+struct GraphEdge
+{
+    OrientedLaneletState to;
+    double cost;
+};
+
+using GeometryCache = std::unordered_map<lanelet::Id, LaneletGeometry>;
+using GeometricGraph =
+    std::unordered_map<OrientedLaneletState, std::vector<GraphEdge>, OrientedLaneletStateHash>;
+
+double pointDistance2d(const lanelet::ConstPoint3d &a, const lanelet::ConstPoint3d &b)
+{
+    const double dx = a.x() - b.x();
+    const double dy = a.y() - b.y();
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+double pointDistance3d(const lanelet::ConstPoint3d &a, const lanelet::ConstPoint3d &b)
+{
+    const double dx = a.x() - b.x();
+    const double dy = a.y() - b.y();
+    const double dz = a.z() - b.z();
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+double pointToSegmentDistance2d(double px, double py,
+                                double ax, double ay,
+                                double bx, double by)
+{
+    const double abx = bx - ax;
+    const double aby = by - ay;
+    const double apx = px - ax;
+    const double apy = py - ay;
+    const double len2 = abx * abx + aby * aby;
+
+    if (len2 < 1e-12)
+    {
+        const double dx = px - ax;
+        const double dy = py - ay;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    const double t = std::max(0.0, std::min(1.0, (apx * abx + apy * aby) / len2));
+    const double cx = ax + t * abx;
+    const double cy = ay + t * aby;
+    const double dx = px - cx;
+    const double dy = py - cy;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+double pointToCenterlineDistance2d(double x, double y, const lanelet::ConstLineString3d &points)
+{
+    if (points.empty())
+        return std::numeric_limits<double>::infinity();
+    if (points.size() == 1)
+    {
+        const double dx = x - points.front().x();
+        const double dy = y - points.front().y();
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    double best = std::numeric_limits<double>::infinity();
+    for (size_t i = 1; i < points.size(); ++i)
+    {
+        best = std::min(best, pointToSegmentDistance2d(
+            x, y,
+            points[i - 1].x(), points[i - 1].y(),
+            points[i].x(), points[i].y()));
+    }
+    return best;
+}
+
+bool pointInPolygon(double x, double y, const std::vector<std::pair<double, double>> &polygon)
+{
+    if (polygon.size() < 3)
+        return false;
+
+    bool inside = false;
+    for (size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++)
+    {
+        const auto &[xi, yi] = polygon[i];
+        const auto &[xj, yj] = polygon[j];
+
+        if (pointToSegmentDistance2d(x, y, xi, yi, xj, yj) <= kPolygonBoundaryTolerance)
+            return true;
+
+        const bool crosses = ((yi > y) != (yj > y)) &&
+            (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (crosses)
+            inside = !inside;
+    }
+    return inside;
+}
+
+std::vector<std::pair<double, double>> laneletPolygon2d(const lanelet::ConstLanelet &ll)
+{
+    std::vector<std::pair<double, double>> polygon;
+    polygon.reserve(ll.leftBound().size() + ll.rightBound().size());
+
+    for (const auto &p : ll.leftBound())
+        polygon.emplace_back(p.x(), p.y());
+
+    const auto &right_bound = ll.rightBound();
+    for (int i = static_cast<int>(right_bound.size()) - 1; i >= 0; --i)
+        polygon.emplace_back(right_bound[i].x(), right_bound[i].y());
+
+    return polygon;
+}
+
+double lineStringLength(const lanelet::ConstLineString3d &points)
+{
+    double length = 0.0;
+    for (size_t i = 1; i < points.size(); ++i)
+        length += pointDistance3d(points[i], points[i - 1]);
+    return length;
+}
+
+bool isCrosswalkLanelet(const lanelet::ConstLanelet &ll)
+{
+    return ll.hasAttribute(lanelet::AttributeName::Subtype) &&
+           ll.attribute(lanelet::AttributeName::Subtype).value() ==
+               lanelet::AttributeValueString::Crosswalk;
+}
+
+const lanelet::ConstPoint3d &stateStartPoint(const LaneletGeometry &geometry,
+                                             bool reversed)
+{
+    return reversed ? geometry.centerline.back() : geometry.centerline.front();
+}
+
+const lanelet::ConstPoint3d &stateEndPoint(const LaneletGeometry &geometry,
+                                           bool reversed)
+{
+    return reversed ? geometry.centerline.front() : geometry.centerline.back();
+}
+
+double orientedHeading(const LaneletGeometry &geometry, bool reversed)
+{
+    const auto &start = stateStartPoint(geometry, reversed);
+    const auto &end = stateEndPoint(geometry, reversed);
+    return std::atan2(end.y() - start.y(), end.x() - start.x());
+}
+
+double headingDifference(double a, double b)
+{
+    double diff = a - b;
+    while (diff > M_PI) diff -= 2.0 * M_PI;
+    while (diff <= -M_PI) diff += 2.0 * M_PI;
+    return std::abs(diff);
+}
+
+lanelet::ConstLanelet orientedLanelet(const GeometryCache &cache,
+                                      const OrientedLaneletState &state)
+{
+    const auto it = cache.find(state.id);
+    if (it == cache.end())
+        throw std::out_of_range("oriented lanelet state missing from geometry cache");
+    return state.reversed ? it->second.lanelet.invert() : it->second.lanelet;
+}
+
+void addDirectedEdge(GeometricGraph &graph,
+                     const OrientedLaneletState &from,
+                     const OrientedLaneletState &to,
+                     double cost)
+{
+    if (from == to)
+        return;
+
+    auto &edges = graph[from];
+    for (auto &edge : edges)
+    {
+        if (edge.to == to)
+        {
+            edge.cost = std::min(edge.cost, cost);
+            return;
+        }
+    }
+    edges.push_back({to, cost});
+}
+
+void addCompatibleLateralEdges(GeometricGraph &graph,
+                               const GeometryCache &cache,
+                               lanelet::Id a,
+                               lanelet::Id b,
+                               double penalty)
+{
+    const auto a_it = cache.find(a);
+    const auto b_it = cache.find(b);
+    if (a_it == cache.end() || b_it == cache.end())
+        return;
+
+    for (const bool a_reversed : {false, true})
+    {
+        for (const bool b_reversed : {false, true})
+        {
+            const double heading_a = orientedHeading(a_it->second, a_reversed);
+            const double heading_b = orientedHeading(b_it->second, b_reversed);
+            if (headingDifference(heading_a, heading_b) > kMaxLateralHeadingDiff)
+                continue;
+
+            const OrientedLaneletState state_a{a, a_reversed};
+            const OrientedLaneletState state_b{b, b_reversed};
+            addDirectedEdge(graph, state_a, state_b, b_it->second.length + penalty);
+            addDirectedEdge(graph, state_b, state_a, a_it->second.length + penalty);
+        }
+    }
+}
+
+void appendUniqueLanelet(std::vector<lanelet::ConstLanelet> &out,
+                         std::unordered_set<lanelet::Id> &seen,
+                         const lanelet::ConstLanelet &candidate)
+{
+    if (seen.insert(candidate.id()).second)
+        out.push_back(candidate);
+}
+
+std::vector<lanelet::ConstLanelet> collectLateralRelations(
+    routing::RoutingGraphUPtr &routingGraph,
+    const lanelet::ConstLanelet &lanelet)
+{
+    std::vector<lanelet::ConstLanelet> related;
+    std::unordered_set<lanelet::Id> seen;
+
+    auto collect_one = [&](const lanelet::ConstLanelet &query) {
+        for (const auto &beside : routingGraph->besides(query))
+            appendUniqueLanelet(related, seen, beside);
+        if (auto l = routingGraph->left(query))          appendUniqueLanelet(related, seen, *l);
+        if (auto r = routingGraph->right(query))         appendUniqueLanelet(related, seen, *r);
+        if (auto al = routingGraph->adjacentLeft(query)) appendUniqueLanelet(related, seen, *al);
+        if (auto ar = routingGraph->adjacentRight(query)) appendUniqueLanelet(related, seen, *ar);
+    };
+
+    collect_one(lanelet);
+    collect_one(lanelet.invert());
+    return related;
+}
+
+GeometryCache buildGeometryCache(const lanelet::LaneletMapPtr &map)
+{
+    GeometryCache cache;
+    for (const auto &ll : map->laneletLayer)
+    {
+        if (isCrosswalkLanelet(ll))
+            continue;
+
+        const auto centerline = ll.centerline3d();
+        if (centerline.size() < 2)
+            continue;
+
+        cache.emplace(ll.id(), LaneletGeometry{ll, centerline, lineStringLength(centerline)});
+    }
+    return cache;
+}
+
+GeometricGraph buildGeometricGraph(const GeometryCache &cache,
+                                   routing::RoutingGraphUPtr &routingGraph)
+{
+    GeometricGraph graph;
+    std::vector<OrientedLaneletState> states;
+    states.reserve(cache.size() * 2);
+    for (const auto &entry : cache)
+    {
+        const OrientedLaneletState forward{entry.first, false};
+        const OrientedLaneletState reverse{entry.first, true};
+        graph[forward];
+        graph[reverse];
+        states.push_back(forward);
+        states.push_back(reverse);
+    }
+
+    for (size_t i = 0; i < states.size(); ++i)
+    {
+        const auto &a_state = states[i];
+        const auto &a = cache.at(a_state.id);
+        for (size_t j = 0; j < states.size(); ++j)
+        {
+            if (i == j) continue;
+            const auto &b_state = states[j];
+            if (a_state.id == b_state.id) continue;
+            const auto &b = cache.at(b_state.id);
+            if (pointDistance2d(stateEndPoint(a, a_state.reversed),
+                                stateStartPoint(b, b_state.reversed)) <= kEndpointConnectDist)
+            {
+                addDirectedEdge(graph, a_state, b_state, b.length);
+            }
+        }
+    }
+
+    for (const auto &entry : cache)
+    {
+        for (const auto &related : collectLateralRelations(routingGraph, entry.second.lanelet))
+        {
+            if (cache.count(related.id()))
+                addCompatibleLateralEdges(graph, cache, entry.first, related.id(),
+                                          kLateralChangePenalty);
+        }
+    }
+
+    return graph;
+}
+
+std::vector<OrientedLaneletState> dijkstraPath(
+    const GeometricGraph &graph,
+    const std::unordered_map<OrientedLaneletState, double, OrientedLaneletStateHash> &start_costs,
+    const std::vector<OrientedLaneletState> &goal_states)
+{
+    if (start_costs.empty() || goal_states.empty())
+        return {};
+
+    struct QueueItem
+    {
+        double cost;
+        OrientedLaneletState state;
+    };
+    struct QueueCompare
+    {
+        bool operator()(const QueueItem &a, const QueueItem &b) const
+        {
+            return a.cost > b.cost;
+        }
+    };
+
+    auto is_goal = [&](const OrientedLaneletState &state) {
+        return std::find(goal_states.begin(), goal_states.end(), state) != goal_states.end();
+    };
+
+    std::priority_queue<QueueItem, std::vector<QueueItem>, QueueCompare> open;
+    std::unordered_map<OrientedLaneletState, double, OrientedLaneletStateHash> dist;
+    std::unordered_map<OrientedLaneletState, OrientedLaneletState, OrientedLaneletStateHash> previous;
+
+    for (const auto &entry : start_costs)
+    {
+        if (!graph.count(entry.first))
+            continue;
+        dist[entry.first] = entry.second;
+        open.push({entry.second, entry.first});
+    }
+
+    OrientedLaneletState best_goal{0, false};
+    bool have_goal = false;
+    while (!open.empty())
+    {
+        const auto current = open.top();
+        open.pop();
+
+        const auto dist_it = dist.find(current.state);
+        if (dist_it == dist.end() || current.cost > dist_it->second + 1e-9)
+            continue;
+        if (is_goal(current.state))
+        {
+            best_goal = current.state;
+            have_goal = true;
+            break;
+        }
+
+        const auto edge_it = graph.find(current.state);
+        if (edge_it == graph.end())
+            continue;
+
+        for (const auto &edge : edge_it->second)
+        {
+            const double next_dist = current.cost + edge.cost;
+            const auto next_it = dist.find(edge.to);
+            if (next_it == dist.end() || next_dist < next_it->second)
+            {
+                dist[edge.to] = next_dist;
+                previous[edge.to] = current.state;
+                open.push({next_dist, edge.to});
+            }
+        }
+    }
+
+    if (!have_goal)
+        return {};
+
+    std::vector<OrientedLaneletState> states;
+    for (auto state = best_goal;; state = previous[state])
+    {
+        states.push_back(state);
+        if (!previous.count(state))
+            break;
+    }
+    std::reverse(states.begin(), states.end());
+    return states;
+}
+
+routing::LaneletPath laneletPathFromStates(const GeometryCache &cache,
+                                           const std::vector<OrientedLaneletState> &states)
+{
+    lanelet::ConstLanelets lanelets;
+    lanelets.reserve(states.size());
+    for (const auto &state : states)
+    {
+        if (cache.count(state.id))
+            lanelets.push_back(orientedLanelet(cache, state));
+    }
+    return routing::LaneletPath(std::move(lanelets));
+}
+
+double pathLengthFromStates(const GeometryCache &cache,
+                            const std::vector<OrientedLaneletState> &states)
+{
+    double length = 0.0;
+    for (const auto &state : states)
+    {
+        const auto it = cache.find(state.id);
+        if (it != cache.end())
+            length += it->second.length;
+    }
+    return length;
+}
+}  // namespace
 
 // ===================================================================
 // Constructor
@@ -20,7 +472,12 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
                              std::string start_lanelet_name, std::string end_lanelet_name,
                              double resolution,
                              int close_radius, int close_iters, int outside_value,
-                             std::string frame_id)
+                             std::string frame_id,
+                             bool has_start_heading,
+                             double start_heading,
+                             bool has_goal_pose,
+                             double goal_x,
+                             double goal_y)
     : start_lanelet_id_(start_lanelet_id),
       end_lanelet_id_(end_lanelet_id),
       start_lanelet_name_(std::move(start_lanelet_name)),
@@ -28,6 +485,11 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
       x_offset_(x_offset),
       y_offset_(y_offset),
       map_path_(std::move(map_path)),
+      has_start_heading_(has_start_heading),
+      start_heading_(start_heading),
+      has_goal_pose_(has_goal_pose),
+      goal_x_(goal_x),
+      goal_y_(goal_y),
       resolution_(resolution),
       close_radius_(close_radius),
       close_iters_(close_iters),
@@ -40,6 +502,27 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
         std::cerr << red << "[GlobalPlanner] resolution must be > 0, got " << resolution_
                   << " - aborting initialization." << reset << std::endl;
         return;
+    }
+
+    // Resolve package:// URIs: "package://pkg/relative/path" → install share path
+    if (map_path_.rfind("package://", 0) == 0)
+    {
+        std::string rest = map_path_.substr(10);
+        auto slash = rest.find('/');
+        if (slash != std::string::npos)
+        {
+            std::string pkg = rest.substr(0, slash);
+            std::string rel = rest.substr(slash + 1);
+            try
+            {
+                map_path_ = ament_index_cpp::get_package_share_directory(pkg) + "/" + rel;
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << red << "[GlobalPlanner] Error resolving package share directory for " 
+                          << pkg << ": " << e.what() << reset << std::endl;
+            }
+        }
     }
 
     // C1: protect against map-load exceptions (file missing, malformed, etc.).
@@ -86,6 +569,7 @@ GlobalPlanner::GlobalPlanner(double x_offset, double y_offset, std::string map_p
         std::cerr << yellow << "[GlobalPlanner] Skipped " << skipped_points
                   << " point(s) lacking local_x/local_y." << reset << std::endl;
     }
+    map_ = map;
 
     if (!start_lanelet_name_.empty() &&
         !resolveLaneletName(map, start_lanelet_name_, start_lanelet_id_, "start_lanelet_name"))
@@ -203,40 +687,86 @@ void GlobalPlanner::map_routing(lanelet::LaneletMapPtr &map)
     const auto startLanelet = *startIt;
     const auto endLanelet   = *endIt;
 
-    const std::vector<std::pair<lanelet::ConstLanelet, lanelet::ConstLanelet>> route_candidates = {
-        {startLanelet, endLanelet},
-        {startLanelet.invert(), endLanelet},
-        {startLanelet, endLanelet.invert()},
-        {startLanelet.invert(), endLanelet.invert()},
-    };
-
-    bool found_route = false;
-    double best_path_length = std::numeric_limits<double>::infinity();
-    routing::LaneletPath best_shortest_path;
-
-    for (const auto &candidate : route_candidates)
+    const auto geometry_cache = buildGeometryCache(map);
+    if (!geometry_cache.count(startLanelet.id()) || !geometry_cache.count(endLanelet.id()))
     {
-        Optional<routing::Route> route = routingGraph->getRoute(candidate.first, candidate.second, 0);
-        if (!route)
-            continue;
-
-        const double path_length = calculatePathLength(route->shortestPath());
-        if (!found_route || path_length < best_path_length)
-        {
-            found_route = true;
-            best_path_length = path_length;
-            best_shortest_path = route->shortestPath();
-        }
-    }
-
-    if (!found_route)
-    {
-        std::cout << red << "Goal lanelet is not reachable from the start lanelet in either direction." << reset << std::endl;
+        std::cerr << red << "[GlobalPlanner] start/end lanelet missing usable centerline geometry."
+                  << reset << std::endl;
         return;
     }
 
-    std::cout << green << "Route found, length=" << best_path_length << " m" << reset << std::endl;
-    generateNeighborWaypoints(map, routingGraph, best_shortest_path);
+    const auto geometric_graph = buildGeometricGraph(geometry_cache, routingGraph);
+    std::unordered_map<OrientedLaneletState, double, OrientedLaneletStateHash> start_costs;
+    for (const bool reversed : {false, true})
+    {
+        const OrientedLaneletState state{startLanelet.id(), reversed};
+        double cost = 0.0;
+        if (has_start_heading_)
+        {
+            const double route_heading = orientedHeading(geometry_cache.at(startLanelet.id()), reversed);
+            if (headingDifference(route_heading, start_heading_) > kMaxLateralHeadingDiff)
+                cost += kStartReverseHeadingPenalty;
+        }
+        start_costs[state] = cost;
+    }
+
+    std::vector<OrientedLaneletState> goal_states = {
+        {endLanelet.id(), false},
+        {endLanelet.id(), true}
+    };
+    if (has_goal_pose_)
+    {
+        std::vector<OrientedLaneletState> selected_goal_states;
+        double best_goal_distance = std::numeric_limits<double>::infinity();
+        for (const auto &state : goal_states)
+        {
+            const auto &end_point = stateEndPoint(geometry_cache.at(state.id), state.reversed);
+            const double dx = end_point.x() - goal_x_;
+            const double dy = end_point.y() - goal_y_;
+            const double distance = std::sqrt(dx * dx + dy * dy);
+            if (distance + EPS < best_goal_distance)
+            {
+                best_goal_distance = distance;
+                selected_goal_states.clear();
+                selected_goal_states.push_back(state);
+            }
+            else if (std::abs(distance - best_goal_distance) <= EPS)
+            {
+                selected_goal_states.push_back(state);
+            }
+        }
+        if (!selected_goal_states.empty())
+        {
+            goal_states = std::move(selected_goal_states);
+            std::cout << yellow << "[GlobalPlanner] Goal endpoint selected from target_pose ("
+                      << goal_x_ << ", " << goal_y_ << "), distance="
+                      << best_goal_distance << " m, reversed="
+                      << (goal_states.front().reversed ? "true" : "false")
+                      << reset << std::endl;
+        }
+    }
+
+    const auto oriented_path = dijkstraPath(geometric_graph, start_costs, goal_states);
+
+    if (oriented_path.empty())
+    {
+        std::cout << red << "Goal lanelet is not reachable from the start lanelet in the bidirectional oriented graph." << reset << std::endl;
+        return;
+    }
+
+    const auto shortest_path = laneletPathFromStates(geometry_cache, oriented_path);
+    const double path_length = pathLengthFromStates(geometry_cache, oriented_path);
+    std::cout << green << "Bidirectional oriented route found, length=" << path_length
+              << " m, lanelets=" << shortest_path.size() << reset << std::endl;
+    for (const auto &state : oriented_path)
+    {
+        if (state.reversed)
+        {
+            std::cout << yellow << "[GlobalPlanner] Using lanelet " << state.id
+                      << " in reverse orientation." << reset << std::endl;
+        }
+    }
+    generateNeighborWaypoints(map, routingGraph, shortest_path);
 }
 
 // ===================================================================
@@ -253,21 +783,53 @@ void GlobalPlanner::addLaneletAsWaypoints(const lanelet::ConstLanelet &lanelet,
     if (centerline.empty())
         return;
 
-    // Sample at fixed cumulative interval.
-    std::vector<lanelet::ConstPoint3d> waypoints;
-    waypoints.push_back(centerline[0]);
-    double cumulative_distance = 0.0;
+    struct WaypointSample
+    {
+        double x;
+        double y;
+        double z;
+    };
+
+    std::vector<WaypointSample> waypoints;
+    waypoints.push_back({centerline.front().x(), centerline.front().y(), centerline.front().z()});
+
+    double accumulated_distance = 0.0;
+    double next_sample_distance = waypoint_interval;
     for (size_t i = 1; i < centerline.size(); ++i)
     {
-        cumulative_distance += distance3d(centerline[i], centerline[i - 1]);
-        if (cumulative_distance >= waypoint_interval)
+        const auto &a = centerline[i - 1];
+        const auto &b = centerline[i];
+        const double segment_length = distance3d(b, a);
+        if (segment_length < EPS)
+            continue;
+
+        while (next_sample_distance <= accumulated_distance + segment_length)
         {
-            waypoints.push_back(centerline[i]);
-            cumulative_distance = 0.0;
+            const double t = (next_sample_distance - accumulated_distance) / segment_length;
+            waypoints.push_back({
+                a.x() + t * (b.x() - a.x()),
+                a.y() + t * (b.y() - a.y()),
+                a.z() + t * (b.z() - a.z())
+            });
+            next_sample_distance += waypoint_interval;
         }
+
+        accumulated_distance += segment_length;
     }
-    if (waypoints.back().id() != centerline.back().id())
-        waypoints.push_back(centerline.back());
+
+    const auto &last_centerline_point = centerline.back();
+    const auto &last_waypoint = waypoints.back();
+    const double dx = last_waypoint.x - last_centerline_point.x();
+    const double dy = last_waypoint.y - last_centerline_point.y();
+    const double dz = last_waypoint.z - last_centerline_point.z();
+    if (std::sqrt(dx * dx + dy * dy + dz * dz) > EPS)
+    {
+        waypoints.push_back({
+            last_centerline_point.x(),
+            last_centerline_point.y(),
+            last_centerline_point.z()
+        });
+    }
 
     std::vector<point_struct> out;
     out.reserve(waypoints.size());
@@ -278,14 +840,14 @@ void GlobalPlanner::addLaneletAsWaypoints(const lanelet::ConstLanelet &lanelet,
         if (i + 1 < waypoints.size())
         {
             const auto &n = waypoints[i + 1];
-            yaw = std::atan2(n.y() - p.y(), n.x() - p.x());
+            yaw = std::atan2(n.y - p.y, n.x - p.x);
         }
         else if (i > 0)
         {
             const auto &q = waypoints[i - 1];
-            yaw = std::atan2(p.y() - q.y(), p.x() - q.x());
+            yaw = std::atan2(p.y - q.y, p.x - q.x);
         }
-        out.push_back({ p.x(), p.y(), yaw, priority,
+        out.push_back({ p.x, p.y, yaw, priority,
                         static_cast<int>(lanelet.id()), lane_sequence_id });
     }
     neighbor_points_.push_back(std::move(out));
@@ -303,6 +865,63 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
     std::set<lanelet::Id> processed_lanelets;
     neighbor_points_.clear();
 
+    auto append_unique = [](lanelet::ConstLanelets &out,
+                            std::unordered_set<lanelet::Id> &seen,
+                            const lanelet::ConstLanelet &candidate) {
+        if (seen.insert(candidate.id()).second)
+            out.push_back(candidate);
+    };
+
+    auto collect_besides_bidirectional = [&](const lanelet::ConstLanelet &base) {
+        lanelet::ConstLanelets out;
+        std::unordered_set<lanelet::Id> seen;
+        auto collect_one = [&](const lanelet::ConstLanelet &query) {
+            for (const auto &ll : routingGraph->besides(query))
+                append_unique(out, seen, ll);
+        };
+        collect_one(base);
+        collect_one(base.invert());
+        return out;
+    };
+
+    auto collect_adjacent_bidirectional = [&](const lanelet::ConstLanelet &base) {
+        lanelet::ConstLanelets out;
+        std::unordered_set<lanelet::Id> seen;
+        auto collect_one = [&](const lanelet::ConstLanelet &query) {
+            for (const auto &ll : collectAdjacentPlus(routingGraph, query, /*include_besides=*/false))
+                append_unique(out, seen, ll);
+        };
+        collect_one(base);
+        collect_one(base.invert());
+        return out;
+    };
+
+    auto collect_following_bidirectional = [&](const lanelet::ConstLanelet &base) {
+        lanelet::ConstLanelets out;
+        std::unordered_set<lanelet::Id> seen;
+        auto collect_one = [&](const lanelet::ConstLanelet &query) {
+            for (const auto &ll : routingGraph->following(query, true))
+                append_unique(out, seen, ll);
+        };
+        collect_one(base);
+        collect_one(base.invert());
+        return out;
+    };
+
+    auto collect_follow_previous_bidirectional = [&](const lanelet::ConstLanelet &base) {
+        lanelet::ConstLanelets out;
+        std::unordered_set<lanelet::Id> seen;
+        auto collect_one = [&](const lanelet::ConstLanelet &query) {
+            for (const auto &ll : routingGraph->following(query, true))
+                append_unique(out, seen, ll);
+            for (const auto &ll : routingGraph->previous(query, true))
+                append_unique(out, seen, ll);
+        };
+        collect_one(base);
+        collect_one(base.invert());
+        return out;
+    };
+
     // D1: build the path-ids cache for O(1) main-path membership.
     path_ids_.clear();
     for (const auto &ll : shortestPath)
@@ -312,12 +931,9 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
     reachable_ids_.clear();
     for (const auto &main_ll : shortestPath)
     {
-        for (const auto &x : routingGraph->following(main_ll, true)) reachable_ids_.insert(x.id());
-        for (const auto &x : routingGraph->previous(main_ll, true))  reachable_ids_.insert(x.id());
-        if (auto x = routingGraph->left(main_ll))                    reachable_ids_.insert(x->id());
-        if (auto x = routingGraph->right(main_ll))                   reachable_ids_.insert(x->id());
-        if (auto x = routingGraph->adjacentLeft(main_ll))            reachable_ids_.insert(x->id());
-        if (auto x = routingGraph->adjacentRight(main_ll))           reachable_ids_.insert(x->id());
+        for (const auto &x : collect_follow_previous_bidirectional(main_ll)) reachable_ids_.insert(x.id());
+        for (const auto &x : collect_besides_bidirectional(main_ll))         reachable_ids_.insert(x.id());
+        for (const auto &x : collect_adjacent_bidirectional(main_ll))        reachable_ids_.insert(x.id());
     }
 
     // (1) Main routing path -> priority 1, lane_sequence_id = 0
@@ -334,7 +950,7 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
     std::vector<lanelet::ConstLanelet> all_neighbor_lanelets;
     for (const auto &path_lanelet : shortestPath)
     {
-        for (const auto &lanelet : routingGraph->besides(path_lanelet))
+        for (const auto &lanelet : collect_besides_bidirectional(path_lanelet))
         {
             if (lanelet.id() == path_lanelet.id())
                 continue;
@@ -376,9 +992,7 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
 
             current_group.push_back(current_lanelet);
 
-            for (const auto &ll : routingGraph->following(current_lanelet, true))
-                enqueue_if_neighbor(ll);
-            for (const auto &ll : routingGraph->previous(current_lanelet, true))
+            for (const auto &ll : collect_follow_previous_bidirectional(current_lanelet))
                 enqueue_if_neighbor(ll);
         }
 
@@ -403,11 +1017,11 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
     size_t branching_count = 0;
     for (const auto &path_lanelet : shortestPath)
     {
-        const auto following_lanelets = routingGraph->following(path_lanelet, true);
+        const auto following_lanelets = collect_following_bidirectional(path_lanelet);
         if (verbose_logging_)
         {
             std::cout << yellow << "Path lanelet " << path_lanelet.id() << " has "
-                      << following_lanelets.size() << " following lanelets" << reset << std::endl;
+                      << following_lanelets.size() << " bidirectional following lanelets" << reset << std::endl;
         }
 
         for (const auto &following_lanelet : following_lanelets)
@@ -461,7 +1075,7 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
     size_t adjacent_count = 0;
     for (const auto &path_lanelet : shortestPath)
     {
-        const auto adjacent_lanelets = collectAdjacentPlus(routingGraph, path_lanelet, /*include_besides=*/false);  // D2
+        const auto adjacent_lanelets = collect_adjacent_bidirectional(path_lanelet);
 
         if (verbose_logging_)
         {
@@ -478,15 +1092,8 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
 
             if (verbose_logging_)
                 std::cout << blue << "  Evaluating adjacent lanelet " << adjacent_lanelet.id()
-                          << " for trajectory compatibility..." << reset << std::endl;
+                          << " as direction-agnostic adjacency..." << reset << std::endl;
 
-            if (!isCompatibleTrajectory(path_lanelet, adjacent_lanelet, routingGraph, shortestPath, map))
-            {
-                if (verbose_logging_)
-                    std::cout << yellow << "  Adjacent lanelet " << adjacent_lanelet.id()
-                              << " filtered out due to incompatible trajectory" << reset << std::endl;
-                continue;
-            }
             if (isBeyondTarget(adjacent_lanelet, shortestPath))
             {
                 if (verbose_logging_)
@@ -522,6 +1129,93 @@ void GlobalPlanner::generateNeighborWaypoints(lanelet::LaneletMapPtr &map,
 std::vector<point_struct> GlobalPlanner::getAllAllWaypointsStruct()
 {
     return all_waypoints_;
+}
+
+bool GlobalPlanner::findLaneletAt(double x, double y, int &lanelet_id, bool &inside) const
+{
+    lanelet_id = 0;
+    inside = false;
+
+    if (!map_)
+        return false;
+
+    double best_distance = std::numeric_limits<double>::infinity();
+    lanelet::Id best_id = 0;
+    double best_inside_distance = std::numeric_limits<double>::infinity();
+    lanelet::Id best_inside_id = 0;
+    int inside_candidates = 0;
+
+    for (const auto &ll : map_->laneletLayer)
+    {
+        if (isCrosswalkLanelet(ll))
+            continue;
+
+        const auto centerline = ll.centerline3d();
+        if (centerline.empty())
+            continue;
+
+        const double distance = pointToCenterlineDistance2d(x, y, centerline);
+        if (pointInPolygon(x, y, laneletPolygon2d(ll)))
+        {
+            ++inside_candidates;
+            if (distance < best_inside_distance)
+            {
+                best_inside_distance = distance;
+                best_inside_id = ll.id();
+            }
+        }
+
+        if (distance < best_distance)
+        {
+            best_distance = distance;
+            best_id = ll.id();
+        }
+    }
+
+    if (best_inside_id != 0)
+    {
+        lanelet_id = static_cast<int>(best_inside_id);
+        inside = true;
+        if (inside_candidates > 1 && ambiguous_lanelet_logs_ < 20)
+        {
+            ++ambiguous_lanelet_logs_;
+            std::cout << yellow << "[GlobalPlanner] Pose (" << x << ", " << y
+                      << ") is inside " << inside_candidates
+                      << " overlapping lanelets; selected lanelet_id=" << lanelet_id
+                      << " by nearest centerline distance=" << best_inside_distance
+                      << " m." << reset << std::endl;
+        }
+        return true;
+    }
+
+    if (best_id != 0 && best_distance <= kLaneletNearestFallbackDist)
+    {
+        lanelet_id = static_cast<int>(best_id);
+        inside = false;
+        return true;
+    }
+
+    return false;
+}
+
+// Public name->id resolver over the loaded map. Mirrors the private overload
+// used in the constructor but works against the already-stored map_, so callers
+// (e.g. the action server) can resolve a goal name before rebuilding.
+bool GlobalPlanner::resolveLaneletName(const std::string &lanelet_name, int &lanelet_id) const
+{
+    if (!map_ || lanelet_name.empty())
+        return false;
+
+    for (const auto &ll : map_->laneletLayer)
+    {
+        if (ll.hasAttribute("name") &&
+            ll.attribute("name").value() == lanelet_name)
+        {
+            lanelet_id = static_cast<int>(ll.id());
+            return true;
+        }
+    }
+    return false;
 }
 
 // ===================================================================

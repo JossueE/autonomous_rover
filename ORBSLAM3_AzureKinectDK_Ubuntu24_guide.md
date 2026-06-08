@@ -383,7 +383,7 @@ Camera1.p1:  0.0005224059568718076
 Camera1.p2: -0.00040463212644681334
 Camera1.k3:  1.5301569700241089
 
-# Resolution — cx ≈ 637 confirms 720P (1280×720)
+# Resolution — cx ≈ 637 confirms 1536P (1280×720)
 Camera.width:  1280
 Camera.height: 720
 
@@ -419,7 +419,7 @@ IMU.AccWalk:    0.0008    # m/s^2.5
 IMU.Frequency:  200.0
 
 #--------------------------------------------------------------------------------------------
-# ORB Extractor Parameters (tuned for 720P)
+# ORB Extractor Parameters (tuned for 1536P)
 #--------------------------------------------------------------------------------------------
 ORBextractor.nFeatures:   1500
 ORBextractor.scaleFactor: 1.2
@@ -548,7 +548,7 @@ int main(int argc, char **argv)
 
     k4a_device_configuration_t config  = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
     config.color_format                = K4A_IMAGE_FORMAT_COLOR_BGRA32;
-    config.color_resolution            = K4A_COLOR_RESOLUTION_720P;
+    config.color_resolution            = K4A_COLOR_RESOLUTION_1536P;
     config.depth_mode                  = K4A_DEPTH_MODE_WFOV_2X2BINNED;
     config.camera_fps                  = K4A_FRAMES_PER_SECOND_30;
     config.synchronized_images_only    = true;
@@ -847,7 +847,7 @@ Test the driver:
 
 ```bash
 ros2 launch azure_kinect_ros_driver driver.launch.py \
-  color_resolution:=720P \
+  color_resolution:=1536P \
   depth_mode:=WFOV_2X2BINNED \
   fps:=30
 ```
@@ -1093,7 +1093,7 @@ ament_package()
 cd ~/kinect_ws
 source install/setup.zsh
 ros2 launch azure_kinect_ros_driver driver.launch.py \
-  color_resolution:=720P \
+  color_resolution:=1536P \
   depth_mode:=WFOV_2X2BINNED \
   fps:=30
 ```
@@ -1127,7 +1127,7 @@ ros2 run orbslam3 rgbd \
 |---|---|---|
 | `libsoundio1` not installable | Dropped from Ubuntu 24.04 | Manually install from Ubuntu 18.04 archive (see §2.3) |
 | `k4aviewer` needs `sudo` | udev rules not active or missing `plugdev` group | Add `TAG+="uaccess"` to rules; `usermod -aG plugdev $USER`; re-login |
-| `Invalid RGB Camera Resolution: 720p` | Case sensitivity in driver arg | Use `720P` (uppercase P) |
+| `Invalid RGB Camera Resolution: 1536P` | Case sensitivity in driver arg | Use `1536P` (uppercase P) |
 | Pangolin window doesn't open | Wayland/XCB conflict | `export QT_QPA_PLATFORM=xcb` before running |
 | `Camera.fps parameter must be integer, aborting` | Float value in YAML | Change `Camera.fps: 30.0` to `Camera.fps: 30` |
 | ORB-SLAM3 `build.sh` crashes laptop | OOM / thermal throttling | Edit `build.sh` to use `make -j2` |
@@ -1184,7 +1184,7 @@ ros2 run orbslam3 rgbd \
 - [ ] C++17 confirmed in wrapper's CMakeLists.txt
 - [ ] OpenCV 4 constants updated
 - [ ] Wrapper built with `--parallel-workers 2`
-- [ ] Driver launched with `color_resolution:=720P` (uppercase P)
+- [ ] Driver launched with `color_resolution:=1536P` (uppercase P)
 - [ ] `ros2 run orbslam3 rgbd` launches with correct topic remaps
 - [ ] `export QT_QPA_PLATFORM=xcb` set before running
 

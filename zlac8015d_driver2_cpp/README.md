@@ -124,7 +124,7 @@ Edit ROS2 parameters in your launch file or via command line:
 ros2 run zlac8015d_driver2_cpp wheels_driver /dev/WHEELS \
     --ros-args \
     -p wheel_radius:=0.1 \
-    -p wheels_separation:=0.4 \
+    -p wheels_separation:=0.315 \
     -p accel_time_ms:=3000 \
     -p VelocityGains.left.kp:=60 
 
@@ -160,4 +160,3 @@ ros2 run zlac8015d_driver2_cpp wheels_driver /dev/WHEELS \
 
 
 ---
-

@@ -10,6 +10,8 @@
 
 // path nav msgs
 #include <nav_msgs/msg/path.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include "rover_bt/action/navigate_to_goal.hpp"
 
 // tf
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -39,6 +41,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -136,7 +139,8 @@ private:
     // Grid Map
     std::shared_ptr<Grid_map> grid_map_;
 
-    // State
+    // State (car_state_mutex_ guards all reads/writes to car_state_ fields)
+    mutable std::mutex car_state_mutex_;
     std::shared_ptr<State> car_state_;
     bool car_state_valid_ = false;
     std::string pose_frame_;
@@ -160,13 +164,19 @@ private:
     int end_lanelet_id_;
     std::string start_lanelet_name_;
     std::string end_lanelet_name_;
+    std::mutex global_planner_mutex_;
 
-    std::vector<point_struct> all_waypoints_from_global_planner_;  // waypoint with the central path and the neighbor lanelets
+    std::vector<point_struct> global_planner_waypoints_all_;  // all global planner priorities (1/2/3/4)
+    std::vector<point_struct> all_waypoints_from_global_planner_;  // active global planner priorities used by local planning
     visualization_msgs::msg::MarkerArray global_planner_markers_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr global_planner_publisher_;
     void publishGlobalPlanner();
+    void publishGlobalPlannerLocked();
     void publishGlobalPlannerOccupancyGrid();
     void rebuildGlobalPlanner();
+    void rebuildGlobalPlannerLocked();
+    void updateActiveGlobalPlannerWaypointsLocked(bool include_alternatives);
+    bool updateStartLaneletFromCurrentPoseLocked(bool allow_nearest_fallback, const char *reason);
     rcl_interfaces::msg::SetParametersResult onPlannerParameters(
         const std::vector<rclcpp::Parameter> &params);
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr params_handler_;
@@ -204,6 +214,16 @@ private:
     void buildWindowMask(cv::Mat &window_mask,
                          std::vector<cv::Point> &window_polygon) const;
     int computeInflationCells() const;
+    bool isMainPriorityBlockedInGrid(const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid,
+                                     bool &blocked) const;
+    void updatePrioritySwitchLocked(const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid);
+
+    double priority_switch_block_radius_m_ = 0.20;
+    int priority_switch_enable_cycles_ = 2;
+    int priority_switch_clear_cycles_ = 3;
+    int priority_blocked_cycles_ = 0;
+    int priority_clear_cycles_ = 0;
+    bool global_planner_alternatives_enabled_ = false;
 
     // publisher for the occupancy grid 
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_test_;
@@ -266,7 +286,7 @@ private:
     bool has_wp1_ = false;
     bool has_wp2_ = false;
 
-    double W_WP1 = 2.0;    // weight for distance to prio-1 path; higher keeps paths near centerline
+    double W_WP1 = 2.2;    // weight for distance to prio-1 path; higher keeps paths near centerline
     double W_WP2 = 0.4;    // weight for distance to prio-2 path; lower avoids pulling toward adjacent edges
     double WP_STROKE_RADIUS_CELLS = 2.0; // thickness when rasterizing lines
 
@@ -280,12 +300,32 @@ private:
     std::string global_planner_frame_id_;
     std::string global_planner_occupancy_output_topic_;
     nav_msgs::msg::OccupancyGrid global_planner_occupancy_grid_;
+    bool global_planner_has_goal_pose_ = false;
+    double global_planner_goal_x_ = 0.0;
+    double global_planner_goal_y_ = 0.0;
 
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr global_planner_occupancy_grid_publisher_;
 
 public:
     path_planning();
     ~path_planning();
+
+    // Action Server types and members
+    using NavigateToGoal = rover_bt::action::NavigateToGoal;
+    using GoalHandleNavigateToGoal = rclcpp_action::ServerGoalHandle<NavigateToGoal>;
+
+private:
+    rclcpp_action::Server<NavigateToGoal>::SharedPtr action_server_;
+    std::shared_ptr<GoalHandleNavigateToGoal> active_goal_handle_;
+    std::mutex action_server_mutex_;
+
+    rclcpp_action::GoalResponse handle_goal(
+        const rclcpp_action::GoalUUID & uuid,
+        std::shared_ptr<const NavigateToGoal::Goal> goal);
+    rclcpp_action::CancelResponse handle_cancel(
+        const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
+    void handle_accepted(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
+    void execute_navigation(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle);
 };
 
 #endif

@@ -11,7 +11,7 @@
   direction: GZ_TO_ROS
 
 # ── Velocity command (ROS → Gazebo DiffDrive plugin) ────────────────────────
-# voice_bt, teleop, and NMPC all publish to /cmd_vel_safe on the ROS side.
+# rover_bt voice, teleop, and NMPC all publish to /cmd_vel_safe on the ROS side.
 # The DiffDrive plugin subscribes to gz topic "cmd_vel_safe".
 - ros_topic_name: "/cmd_vel_safe"
   gz_topic_name: "/cmd_vel_safe"

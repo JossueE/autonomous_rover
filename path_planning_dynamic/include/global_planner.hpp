@@ -40,6 +40,12 @@ private:
     double      x_offset_         = 0.0;
     double      y_offset_         = 0.0;
     std::string map_path_;
+    lanelet::LaneletMapPtr map_;
+    bool        has_start_heading_ = false;
+    double      start_heading_ = 0.0;
+    bool        has_goal_pose_ = false;
+    double      goal_x_ = 0.0;
+    double      goal_y_ = 0.0;
 
     // Waypoint storage
     std::vector<std::vector<point_struct>> neighbor_points_;
@@ -51,6 +57,7 @@ private:
 
     // Diagnostics
     bool verbose_logging_ = true;          // when false, suppresses per-iteration debug logs
+    mutable int ambiguous_lanelet_logs_ = 0;
 
     // Occupancy grid configuration & data
     double      resolution_     = 0.0;
@@ -162,11 +169,21 @@ public:
                   std::string start_lanelet_name, std::string end_lanelet_name,
                   double resolution,
                   int close_radius, int close_iters, int outside_value,
-                  std::string frame_id);
+                  std::string frame_id,
+                  bool has_start_heading = false,
+                  double start_heading = 0.0,
+                  bool has_goal_pose = false,
+                  double goal_x = 0.0,
+                  double goal_y = 0.0);
 
     std::vector<point_struct>     getAllAllWaypointsStruct();
     nav_msgs::msg::OccupancyGrid  getOccupancyGrid();
     bool                          isOccupancyGridReady();
+    bool                          findLaneletAt(double x, double y, int &lanelet_id, bool &inside) const;
+
+    // Resolve a lanelet 'name' tag to its id using the loaded map. Returns false
+    // when the map is not loaded or no lanelet carries that exact name.
+    bool                          resolveLaneletName(const std::string &lanelet_name, int &lanelet_id) const;
 };
 
 #endif // GLOBAL_PLANNER_HPP

@@ -1,0 +1,14 @@
+#pragma once
+
+#include <behaviortree_cpp/action_node.h>
+
+namespace rover_bt {
+
+class ClearCommand : public BT::SyncActionNode {
+public:
+  ClearCommand(const std::string& name, const BT::NodeConfig& config);
+  static BT::PortsList providedPorts();
+  BT::NodeStatus tick() override;
+};
+
+}  // namespace rover_bt

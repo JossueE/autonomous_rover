@@ -1,0 +1,16 @@
+# Goal
+string location_name          # human-readable name (e.g. "cocina")
+geometry_msgs/PoseStamped target_pose
+string lanelet_name           # lanelet name for path_planning_node
+---
+# Result
+bool success
+string message                # "Goal reached" or failure reason
+float32 total_distance
+float32 total_time
+---
+# Feedback
+float32 distance_remaining
+float32 estimated_time_remaining
+geometry_msgs/PoseStamped current_pose
+string planner_status         # planning, tracking, replanning

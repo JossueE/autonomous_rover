@@ -1,0 +1,570 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="RoverBTMain">
+  <BehaviorTree ID="RoverBTMain">
+    <!--
+      ReactiveSequence root: re-ticks EVERY child from the top on each cycle,
+      even while a later layer (the mode dispatch) is RUNNING. This is required
+      so the Safety, Health and Command-arbitration layers keep running while a
+      mode subtree holds a long-running action (NavigateToGoal / MoveRover).
+      A plain Parallel here latched completed (SUCCESS) children and stopped
+      re-ticking them whenever ModeDispatch returned RUNNING — which froze the
+      odom e-stop and command arbitration for the entire duration of any
+      navigation or teleop move. Each layer returns SUCCESS in normal
+      operation, so the sequence always reaches ModeDispatch.
+    -->
+    <ReactiveSequence name="RoverBTRoot">
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 0: COMMAND ARBITRATION (must precede Safety)  -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Parse the winning command into the blackboard BEFORE the safety gate
+           so an emergency_stop command is seen by EmergencyGate on the same
+           tick. If this ran after Safety, the mode dispatch's DiscardIn*
+           (ClearCommand) would wipe the command before Safety could react,
+           and a command-driven emergency would never fire. -->
+      <ProcessCommand/>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 1: SAFETY (highest priority, always ticks)    -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Sequence name="SafetyLayer">
+        <Fallback name="EmergencyGate">
+          <!-- If no emergency command → pass through (inverted SUCCESS) -->
+          <Inverter name="NoEmergency">
+            <CheckCommand expected="emergency_stop"/>
+          </Inverter>
+          <!-- Emergency detected → stop everything. Mark this as a NON-odom,
+               NON-wheel emergency so EMERGENCY does not auto-resume: a commanded
+               e-stop always requires an explicit 'resume'. -->
+          <Sequence name="DoEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
+            <Speak message="Parada de emergencia activada desde el botón de emergencia."/>
+            <ClearCommand/>
+          </Sequence>
+        </Fallback>
+
+        <!-- Wheel-driver power loss → e-stop, regardless of motion. The wheel
+             encoders publish continuously at ~50 Hz whenever the drivers are
+             powered (the driver only skips publishing when a register read
+             fails), so silence means the e-stop button cut power to the wheel
+             drivers (or a serial fault) — dangerous at any speed because the
+             wheels can no longer hold position. Checked BEFORE the odom gate: a
+             power cut also drops RTAB-Map odometry, so the wheel loss is the root
+             cause. We announce the wheels and suppress the downstream "odometry
+             lost" message. The spoken alert is edge-gated on emergency_from_wheels
+             so it is said once, not every tick while the button stays pressed.
+             emergency_from_wheels also lets EMERGENCY auto-resume once the wheels
+             report again (button released / power restored). -->
+        <Fallback name="WheelPowerGate">
+          <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+          <Sequence name="WheelsLostEmergency">
+            <ZeroTwist/>
+            <SetMode mode="EMERGENCY"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <!-- Speak only on the first tick of the loss (edge-trigger). -->
+            <Fallback name="AnnounceWheelsOnce">
+              <CheckFlag flag="emergency_from_wheels"/>
+              <Sequence name="FirstWheelsAlert">
+                <SetFlag flag="emergency_from_wheels" value="true"/>
+                <Speak message="Ruedas sin energía. Esperando reconexión de los motores."/>
+              </Sequence>
+            </Fallback>
+          </Sequence>
+        </Fallback>
+
+        <!-- Critical sensor check: odom loss = e-stop -->
+        <Fallback name="CriticalSensorGate">
+          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"
+                             lost_debounce_sec="1.0"/>
+          <Fallback name="OdomLostHandler">
+            <!-- If the wheels are ALSO dead, WheelPowerGate already e-stopped and
+                 announced it; this odom loss is just a symptom of the power cut,
+                 so suppress this branch (no duplicate emergency, no "odometría
+                 perdida"). A stale motor with on_fail=error returns FAILURE, which
+                 the Inverter turns into SUCCESS → the Fallback short-circuits. -->
+            <Inverter name="WheelsAreTheCause">
+              <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+            </Inverter>
+            <!-- Genuine odom loss with the wheels still alive. Tag it as
+                 odom-caused so EMERGENCY can auto-resume once RTAB-Map odometry
+                 recovers (relocalizes), without a manual 'resume'. -->
+            <Sequence name="OdomLostEmergency">
+              <ZeroTwist/>
+              <SetMode mode="EMERGENCY"/>
+              <SetFlag flag="emergency_from_odom" value="true"/>
+              <SetFlag flag="emergency_from_wheels" value="false"/>
+              <Speak message="Odometría perdida. Parada de emergencia."/>
+            </Sequence>
+          </Fallback>
+        </Fallback>
+      </Sequence>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 2: SYSTEM HEALTH MONITOR (parallel watchdogs) -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Parallel name="SystemHealthMonitor"
+                success_count="-1"
+                failure_count="1">
+        <!-- Each watchdog checks its sensor and publishes diagnostics.
+             Returns SUCCESS if healthy, FAILURE if critical. -->
+        <CheckSensorHealth sensor="lidar"  max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="camera" max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="imu"    max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <CheckSensorHealth sensor="motor"  max_stale_sec="5.0"
+                           on_fail="warn"/>
+        <!-- Odom is checked in SafetyLayer (critical) -->
+      </Parallel>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 4: MAPPING OVERLAY (orthogonal to modes)      -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Fallback name="MappingOverlay">
+        <Sequence name="StartMappingSeq">
+          <CheckCommand expected="start_mapping"/>
+          <Inverter><CheckFlag flag="is_mapping"/></Inverter>
+          <StartMapping mode="mapping"/>
+          <Speak message="Iniciando mapeo nuevo."/>
+          <ClearCommand/>
+        </Sequence>
+        <Sequence name="StartSlamSeq">
+          <CheckCommand expected="start_slam"/>
+          <Inverter><CheckFlag flag="is_mapping"/></Inverter>
+          <StartMapping mode="slam"/>
+          <Speak message="Mejorando mapa existente."/>
+          <ClearCommand/>
+        </Sequence>
+        <Sequence name="StopMappingSeq">
+          <CheckCommand expected="stop_mapping"/>
+          <CheckFlag flag="is_mapping"/>
+          <StopMapping/>
+          <Speak message="Mapa guardado."/>
+          <ClearCommand/>
+        </Sequence>
+        <AlwaysSuccess name="MappingPassthrough"/>
+      </Fallback>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 4.5: JOYCON OVERLAY (manual override)         -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- Joycon teleop is DETECTED, never a voice command. Whenever the
+           operator holds the deadman and uses the stick (CheckJoyActive),
+           take over: switch to TELEOP_JOYCON from any mode except EMERGENCY
+           (safety stays in charge). on_joy publishes cmd_vel directly; this
+           layer only flips the mode so status/telemetry reflect manual
+           control. The TELEOP_JOYCON dispatch case returns to IDLE once the
+           stick is released. -->
+      <Fallback name="JoyconOverlay">
+        <Sequence name="JoyTakeover">
+          <CheckJoyActive timeout_sec="1.0"/>
+          <Inverter><CheckMode expected="TELEOP_JOYCON"/></Inverter>
+          <Inverter><CheckMode expected="EMERGENCY"/></Inverter>
+          <ZeroTwist/>
+          <SetMode mode="TELEOP_JOYCON"/>
+          <Speak message="Control manual."/>
+          <ClearCommand/>
+        </Sequence>
+        <AlwaysSuccess name="JoyconPassthrough"/>
+      </Fallback>
+
+      <!-- ════════════════════════════════════════════════════ -->
+      <!-- LAYER 5: MODE DISPATCH                              -->
+      <!-- ════════════════════════════════════════════════════ -->
+      <Switch7 name="ModeDispatch" variable="{mode}"
+               case_1="EMERGENCY"      case_2="TELEOP_VOICE"
+               case_3="TELEOP_JOYCON"  case_4="AUTONOMOUS"
+               case_5="PATROL"         case_6="IDLE"
+               case_7="PERSON_TRACK">
+
+        <!-- === EMERGENCY MODE === -->
+        <Fallback name="EmergencyMode">
+          <!-- Auto-recover from an odom-loss emergency once RTAB-Map odometry is
+               healthy again (relocalized). Only fires when the emergency was
+               caused by odom loss (emergency_from_odom=true): commanded e-stops
+               and wheel-loss e-stops clear that flag, so they still require a
+               manual 'resume'. CheckSensorHealth(odom) returns SUCCESS only when
+               odometry is no longer lost AND fresh, so this cannot resume while
+               RTAB-Map is still lost. The Safety layer's CriticalSensorGate
+               re-asserts EMERGENCY every tick while odom is lost, so this branch
+               can only win on a tick where odom has genuinely recovered. -->
+          <Sequence name="AutoResumeFromOdom">
+            <CheckFlag flag="emergency_from_odom"/>
+            <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Odometría recuperada. Operación reanudada."/>
+          </Sequence>
+          <!-- Auto-recover from a wheel-power-loss emergency once the wheel
+               encoders report fresh data again (button released / drivers
+               re-powered and re-enabled). Only fires when the emergency was
+               caused by the wheels (emergency_from_wheels=true); commanded e-stops
+               and odom-loss e-stops clear that flag. The Safety layer's
+               WheelPowerGate re-asserts EMERGENCY every tick while the wheels are
+               silent, so this branch can only win on a tick where the wheels have
+               genuinely come back. If odom is still lost at that point, the odom
+               gate immediately re-asserts EMERGENCY (now correctly tagged as
+               odom-caused), so safety is preserved. -->
+          <Sequence name="AutoResumeFromWheels">
+            <CheckFlag flag="emergency_from_wheels"/>
+            <CheckSensorHealth sensor="motor" max_stale_sec="1.5" on_fail="error"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Ruedas recuperadas. Operación reanudada."/>
+          </Sequence>
+          <Sequence name="ResumeFromEmergency">
+            <CheckCommand expected="resume"/>
+            <SetFlag flag="emergency_from_odom" value="false"/>
+            <SetFlag flag="emergency_from_wheels" value="false"/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Operación reanudada."/>
+            <ClearCommand/>
+          </Sequence>
+          <!-- Keep the safety channel alive: publish ZeroTwist every tick so
+               the twist_priority_mux never falls through to cmd_vel_nav. -->
+          <Sequence name="HoldEmergency">
+            <ClearCommand name="DiscardInEmergency"/>
+            <ZeroTwist/>
+          </Sequence>
+        </Fallback>
+
+        <!-- === TELEOP VOICE MODE === -->
+        <SubTree ID="TeleopVoiceSubtree" _autoremap="true"/>
+
+        <!-- === TELEOP JOYCON MODE === -->
+        <!-- Entered automatically by JoyconOverlay while the stick is in use.
+             Returns to IDLE on its own once the stick is released. -->
+        <Fallback name="TeleopJoyconMode">
+          <!-- Joypad button Y requests autonomous → idle, ready for a goal -->
+          <Sequence name="JoyToAuto">
+            <CheckCommand expected="autonomous"/>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Listo para navegar."/>
+            <ClearCommand/>
+          </Sequence>
+          <!-- Stick released (deadman up) → stop and return to IDLE -->
+          <Sequence name="JoyReleased">
+            <Inverter><CheckJoyActive timeout_sec="1.0"/></Inverter>
+            <ZeroTwist/>
+            <SetMode mode="IDLE"/>
+            <Speak message="Control manual desactivado."/>
+            <ClearCommand/>
+          </Sequence>
+          <ClearCommand name="DiscardInJoycon"/>
+        </Fallback>
+
+        <!-- === AUTONOMOUS MODE === -->
+        <SubTree ID="AutonomousSubtree" _autoremap="true"/>
+
+        <!-- === PATROL MODE === -->
+        <SubTree ID="PatrolSubtree" _autoremap="true"/>
+
+        <!-- === IDLE MODE === -->
+        <SubTree ID="IdleSubtree" _autoremap="true"/>
+
+        <!-- === PERSON_TRACK MODE === -->
+        <SubTree ID="PersonTrackSubtree" _autoremap="true"/>
+
+        <!-- Switch7 default: unknown/unimplemented mode → reset to IDLE -->
+        <SetMode mode="IDLE"/>
+      </Switch7>
+    </ReactiveSequence>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Autonomous Navigation with Supervision       -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    ReactiveFallback so the supervisor conditions (stop / succeeded / failed /
+    stalled / planner_timeout) are re-checked on EVERY tick while the
+    NavigateToGoal action runs. NavigateToGoal is the last child: it is started
+    and kept RUNNING here (not in IdleSubtree, where a mode switch would halt
+    and cancel it). When an earlier branch succeeds, the ReactiveFallback halts
+    NavigateToGoal, which cancels the action goal.
+  -->
+  <BehaviorTree ID="AutonomousSubtree">
+    <ReactiveFallback name="AutonomousMode">
+      <!-- Cancel navigation -->
+      <Sequence name="CancelNav">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Navegación cancelada."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Check if goal reached -->
+      <Sequence name="GoalReached">
+        <CheckNavStatus expected="succeeded"/>
+        <ZeroTwist/>
+        <Speak message="Llegué a {target_location}."/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+
+      <!-- Navigation failure detected → tiered recovery -->
+      <Sequence name="NavFailureRecovery">
+        <CheckNavStatus expected="failed"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
+      </Sequence>
+
+      <!-- Stall detection: no progress for 30s -->
+      <Sequence name="StallRecovery">
+        <CheckNavStatus expected="stalled"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
+      </Sequence>
+
+      <!-- Planner heartbeat lost -->
+      <Sequence name="PlannerDead">
+        <CheckNavStatus expected="planner_timeout"/>
+        <Speak message="Planificador no responde."/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+
+      <!-- Default: start/continue driving to the goal (RUNNING while underway) -->
+      <NavigateToGoal location="{target_location}"/>
+    </ReactiveFallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Patrol Mode                                  -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    ReactiveFallback, same pattern as AutonomousSubtree: the NavigateToGoal to
+    the current waypoint is the default RUNNING leaf; the guard branches are
+    re-checked every tick. On 'succeeded', PatrolAdvance bumps the index (which
+    also resets nav_status to 'navigating' so the waypoint isn't counted twice),
+    then the default leaf drives to the new {patrol_waypoint}.
+  -->
+  <BehaviorTree ID="PatrolSubtree">
+    <ReactiveFallback name="PatrolMode">
+      <Sequence name="PatrolStop">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Patrulla detenida."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Current waypoint reached → advance to next -->
+      <Sequence name="PatrolAdvance">
+        <CheckNavStatus expected="succeeded"/>
+        <IncrementPatrolIndex/>
+        <Speak message="Siguiente punto: {patrol_waypoint}."/>
+      </Sequence>
+
+      <!-- Nav failure during patrol → try recovery -->
+      <Sequence name="PatrolRecovery">
+        <CheckNavStatus expected="failed"/>
+        <SubTree ID="RecoverySubtree" _autoremap="true"/>
+      </Sequence>
+
+      <!-- Default: drive to the current patrol waypoint -->
+      <NavigateToGoal location="{patrol_waypoint}"/>
+    </ReactiveFallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Tiered Recovery                              -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="RecoverySubtree">
+    <Fallback name="TieredRecovery">
+      <!-- Attempt 1: Request replan -->
+      <Sequence name="Attempt1_Replan">
+        <CheckFlag flag="recovery_attempted" negate="true"/>
+        <SetFlag flag="recovery_attempted" value="true"/>
+        <Speak message="Replanificando ruta."/>
+        <RequestReplan/>
+      </Sequence>
+      <!-- Attempt 2: Give up -->
+      <Sequence name="Attempt2_GiveUp">
+        <SetFlag flag="recovery_attempted" value="false"/>
+        <ZeroTwist/>
+        <Speak message="No puedo llegar al destino."/>
+        <SetMode mode="IDLE"/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Idle Mode                                    -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="IdleSubtree">
+    <Fallback name="IdleMode">
+      <Sequence name="StartNav">
+        <CheckCommand expected="navigate"/>
+        <!-- Switch to AUTONOMOUS and let AutonomousSubtree own the long-running
+             goal so it can be supervised and cancelled reactively. Previously
+             NavigateToGoal lived here and returned RUNNING, so SetMode never
+             ran and the supervisor (GoalReached/recovery) was unreachable. -->
+        <SetMode mode="AUTONOMOUS"/>
+        <Speak message="Navegando a {target_location}."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="StartPatrol">
+        <CheckCommand expected="patrol"/>
+        <!-- Advance to patrol index 0 and switch to PATROL; PatrolSubtree owns
+             the long-running NavigateToGoal so it can supervise/advance. -->
+        <IncrementPatrolIndex/>
+        <SetMode mode="PATROL"/>
+        <Speak message="Iniciando patrulla."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="EnterTeleopVoice">
+        <CheckCommand expected="teleop_voice"/>
+        <SetMode mode="TELEOP_VOICE"/>
+        <Speak message="Modo voz. Di avanza, retrocede, izquierda, derecha o detente."/>
+        <ClearCommand/>
+      </Sequence>
+      <!-- TELEOP_JOYCON is entered automatically by JoyconOverlay when the
+           operator uses the joystick — there is no voice/command entry. -->
+      <Sequence name="EnterPersonTrack">
+        <CheckCommand expected="person_track"/>
+        <!-- target (if any) selects the indoor/outdoor tuning profile; empty
+             keeps the tracker's current profile. -->
+        <SetPersonProfile profile="{target_location}"/>
+        <SetMode mode="PERSON_TRACK"/>
+        <Speak message="Modo seguimiento de persona."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="SaveLoc">
+        <CheckCommand expected="save_location"/>
+        <SaveLocation location_name="{target_location}"/>
+        <Speak message="Ubicación {target_location} guardada."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="StatusCmd">
+        <CheckCommand expected="status"/>
+        <ClearCommand/>
+        <PublishStatus/>
+      </Sequence>
+      <ClearCommand name="DiscardInIdle"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Teleop Voice                                 -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <BehaviorTree ID="TeleopVoiceSubtree">
+    <Fallback name="TeleopVoiceMode">
+      <Sequence name="VoiceToAuto">
+        <CheckCommand expected="autonomous"/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Modo autónomo."/>
+        <ClearCommand/>
+      </Sequence>
+      <!-- No voice transition to joycon: it is entered by using the stick. -->
+      <Sequence name="VoiceToPersonTrack">
+        <CheckCommand expected="person_track"/>
+        <SetPersonProfile profile="{target_location}"/>
+        <SetMode mode="PERSON_TRACK"/>
+        <Speak message="Modo seguimiento de persona."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceStop">
+        <CheckCommand expected="stop"/>
+        <ZeroTwist/>
+        <Speak message="Deteniendo."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceForward">
+        <CheckCommand expected="forward"/>
+        <Speak message="Avanzando."/>
+        <ClearCommand/>
+        <MoveRover linear="0.3" angular="0.0" duration="2.0"/>
+      </Sequence>
+      <Sequence name="VoiceBackward">
+        <CheckCommand expected="backward"/>
+        <Speak message="Retrocediendo."/>
+        <ClearCommand/>
+        <MoveRover linear="-0.3" angular="0.0" duration="2.0"/>
+      </Sequence>
+      <Sequence name="VoiceTurnLeft">
+        <CheckCommand expected="turn_left"/>
+        <Speak message="Girando a la izquierda."/>
+        <ClearCommand/>
+        <MoveRover linear="0.0" angular="0.5" duration="1.5"/>
+      </Sequence>
+      <Sequence name="VoiceTurnRight">
+        <CheckCommand expected="turn_right"/>
+        <Speak message="Girando a la derecha."/>
+        <ClearCommand/>
+        <MoveRover linear="0.0" angular="-0.5" duration="1.5"/>
+      </Sequence>
+      <Sequence name="VoiceSaveLoc">
+        <CheckCommand expected="save_location"/>
+        <SaveLocation location_name="{target_location}"/>
+        <Speak message="Ubicación {target_location} guardada."/>
+        <ClearCommand/>
+      </Sequence>
+      <Sequence name="VoiceStatus">
+        <CheckCommand expected="status"/>
+        <ClearCommand/>
+        <PublishStatus/>
+      </Sequence>
+      <ClearCommand name="DiscardInVoice"/>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SUBTREE: Person Track (follow-me)                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--
+    The actual following is done by the person_tracker node, which publishes to
+    /cmd_vel_person while enabled. rover_bt drives /person_tracker/enable from
+    {mode} every tick (enabled only here), and the twist mux routes the tracker's
+    velocity to the wheels with LOWER priority than the BT's /cmd_vel_safe — so
+    Safety/odom e-stops still override instantly.
+
+    This subtree is a ReactiveFallback (guards re-checked every tick):
+      - stop / autonomous → leave the mode (disables the tracker on the next tick)
+      - person_track again → live-switch the indoor/outdoor profile, stay in mode
+      - lost / found edges → speak once (tracker keeps searching; we stay in mode)
+      - default → hold the mode (AlwaysSuccess); the tracker is driving.
+  -->
+  <BehaviorTree ID="PersonTrackSubtree">
+    <ReactiveFallback name="PersonTrackMode">
+      <!-- Exit the mode on stop or an autonomous request. -->
+      <Sequence name="PersonTrackExit">
+        <Fallback name="ExitCommand">
+          <CheckCommand expected="stop"/>
+          <CheckCommand expected="autonomous"/>
+        </Fallback>
+        <ZeroTwist/>
+        <SetMode mode="IDLE"/>
+        <Speak message="Seguimiento de persona detenido."/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- Re-issuing person_track while tracking switches the tuning profile. -->
+      <Sequence name="PersonTrackSwitchProfile">
+        <CheckCommand expected="person_track"/>
+        <SetPersonProfile profile="{target_location}"/>
+        <ClearCommand/>
+      </Sequence>
+
+      <!-- The follower gave up (LOST_STOPPED): announce + ask the person back.
+           We stay in PERSON_TRACK; the tracker keeps watching to re-acquire. -->
+      <Sequence name="AnnouncePersonLost">
+        <CheckPersonEvent event="lost"/>
+        <Speak message="Perdí a la persona. Por favor regresa, aquí te espero."/>
+      </Sequence>
+
+      <!-- Re-acquired after being lost. -->
+      <Sequence name="AnnouncePersonFound">
+        <CheckPersonEvent event="found"/>
+        <Speak message="Te encontré. Continuamos."/>
+      </Sequence>
+
+      <!-- Default: hold the mode; the person_tracker node is driving. -->
+      <AlwaysSuccess name="PersonTrackHold"/>
+    </ReactiveFallback>
+  </BehaviorTree>
+</root>

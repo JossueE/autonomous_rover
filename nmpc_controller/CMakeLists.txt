@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(CMAKE_DEBUG_FLAG)
   message(STATUS "******* CMAKE_DEBUG_FLAG: ON")
 else()
-  message(WARNING "******* CMAKE_DEBUG_FLAG is unset/empty. Building without debug macro")
+  message(STATUS "******* CMAKE_DEBUG_FLAG is unset/empty. Building without debug macro")
 endif()
 
 # -----------------------------

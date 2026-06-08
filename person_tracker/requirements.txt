@@ -1,0 +1,6 @@
+ultralytics
+opencv-python
+numpy
+# OSNet Re-ID — install prerequisites first, then from source:
+# pip install cython scipy Pillow h5py matplotlib
+# pip install git+https://github.com/KaiyangZhou/deep-person-reid.git

@@ -542,7 +542,7 @@
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
     <tag k="one_way" v="no"/>
-    <tag k="name" v="station1"/>
+    <tag k="name" v="estación"/>
   </relation>
   <relation id="44">
     <member type="way" role="left" ref="140"/>
@@ -561,7 +561,7 @@
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
     <tag k="one_way" v="no"/>
-    <tag k="name" v="station3"/>
+    <tag k="name" v="repiza"/>
   </relation>
   <relation id="65">
     <member type="way" role="left" ref="63"/>
@@ -571,7 +571,7 @@
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
     <tag k="one_way" v="no"/>
-    <tag k="name" v="home"/>
+    <tag k="name" v="inicio"/>
   </relation>
   <relation id="79">
     <member type="way" role="left" ref="77"/>
@@ -599,7 +599,7 @@
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
     <tag k="one_way" v="no"/>
-    <tag k="name" v="end"/>
+    <tag k="name" v="fin"/>
   </relation>
   <relation id="104">
     <member type="way" role="left" ref="100"/>
@@ -609,7 +609,7 @@
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
     <tag k="one_way" v="no"/>
-    <tag k="name" v="station2"/>
+    <tag k="name" v="banda"/>
   </relation>
   <relation id="127">
     <member type="way" role="left" ref="124"/>
@@ -627,7 +627,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="133">
     <member type="way" role="left" ref="131"/>
@@ -636,7 +636,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="161">
     <member type="way" role="left" ref="160"/>
@@ -654,7 +654,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="180">
     <member type="way" role="left" ref="178"/>
@@ -663,7 +663,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="187">
     <member type="way" role="left" ref="185"/>
@@ -672,7 +672,7 @@
     <tag k="subtype" v="road"/>
     <tag k="speed_limit" v="10"/>
     <tag k="location" v="urban"/>
-    <tag k="one_way" v="yes"/>
+    <tag k="one_way" v="no"/>
   </relation>
   <relation id="217">
     <member type="way" role="left" ref="215"/>

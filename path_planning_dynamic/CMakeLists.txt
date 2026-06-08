@@ -1,13 +1,22 @@
 cmake_minimum_required(VERSION 3.8)
 project(path_planning_dynamic)
 
+if(POLICY CMP0144)
+  cmake_policy(SET CMP0144 NEW)
+endif()
+
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "Suppress dev warnings from third-party cmake modules")
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(rover_bt REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -55,10 +64,27 @@ add_executable(path_planning_node
 
 add_executable(pointcloud_clustering_node src/pointcloud_clustering.cpp)
 
+# Standalone diagnostic: checks an .osm map for lanelet junction gaps that would
+# make the planner unable to route between lanelets.
+add_executable(junction_gap_check src/junction_gap_check.cpp)
+ament_target_dependencies(junction_gap_check
+  ament_index_cpp
+  grid_map_ros  # directory-scoped Eigen plugin define needs grid_map's headers
+  lanelet2_core
+  lanelet2_io
+  lanelet2_maps
+  lanelet2_projection
+  lanelet2_routing
+  lanelet2_traffic_rules
+)
+
 add_executable(pointcloud_roi_node src/pointcloud_roi.cpp)
 
 ament_target_dependencies(path_planning_node
   rclcpp
+  rclcpp_action
+  ament_index_cpp
+  rover_bt
   rcl_interfaces
   std_msgs
   sensor_msgs
@@ -109,14 +135,10 @@ ament_export_dependencies(
   polygon_msgs
 )
 
-rosidl_target_interfaces(path_planning_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
-rosidl_target_interfaces(pointcloud_clustering_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
-
-rosidl_target_interfaces(pointcloud_roi_node
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+target_link_libraries(path_planning_node "${cpp_typesupport_target}")
+target_link_libraries(pointcloud_clustering_node "${cpp_typesupport_target}")
+target_link_libraries(pointcloud_roi_node "${cpp_typesupport_target}")
 
 
 target_include_directories(pointcloud_clustering_node PUBLIC
@@ -124,17 +146,20 @@ target_include_directories(pointcloud_clustering_node PUBLIC
   $<INSTALL_INTERFACE:include>
   /usr/include/eigen3
 )
+target_include_directories(pointcloud_clustering_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 target_include_directories(path_planning_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   /usr/include/eigen3
 )
+target_include_directories(path_planning_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 target_include_directories(pointcloud_roi_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_include_directories(pointcloud_roi_node SYSTEM PUBLIC ${PCL_INCLUDE_DIRS})
 
 
 link_directories(${PCL_LIBRARY_DIRS})
@@ -154,6 +179,11 @@ install(TARGETS
 
 install(TARGETS
   pointcloud_roi_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS
+  junction_gap_check
   DESTINATION lib/${PROJECT_NAME}
 )
 

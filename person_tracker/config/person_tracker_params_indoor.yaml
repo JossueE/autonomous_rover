@@ -1,0 +1,91 @@
+person_tracker_node:
+  ros__parameters:
+
+    # ── YOLO ──────────────────────────────────────────────────────────────
+    model_path: "yolov8n.pt"
+    confidence_threshold: 0.5
+    device: "0"                         # "0" = first CUDA GPU, "cpu" = CPU
+
+    # ── INPUT TOPICS (Azure Kinect) ────────────────────────────────────────
+    rgb_topic:          "/k4a/rgb/image_raw"
+    depth_topic:        "/k4a/depth_to_rgb/image_raw"
+    camera_info_topic:  "/k4a/rgb/camera_info"
+
+    # ── DETECTION ─────────────────────────────────────────────────────────
+    target_class: "person"
+    publish_debug_image: true
+
+    # ── RE-IDENTIFICATION (OSNet) ──────────────────────────────────────────
+    reid_model: "osnet_ibn_x1_0"
+    reid_similarity_threshold: 0.7
+    reid_ema_alpha: 0.9
+    reid_reacquire_threshold: 0.55      # banda baja para re-enganchar (histéresis)
+    reid_lost_frames: 3                 # frames seguidos sin match antes de declarar pérdida
+    reid_every_n_frames: 2              # corre OSNet 1 de cada N frames (IoU entre medias) — baja carga
+    reid_iou_threshold: 0.3             # IoU para mantener el target en frames sin Re-ID
+    frame_timeout_s: 0.5                # si no llega frame RGB en este tiempo → stop de seguridad
+
+    # ── TRACKING CONTROL (INDOOR — más suave y conservador) ──────────────
+    target_distance_m: 0.70            # distancia más corta en lab — sigue de cerca
+    max_linear_speed: 0.7             # subido (era 0.6) — un poco más rápido en interior
+    max_angular_speed: 1.5              # subido (era 1.6) — más techo para que las vueltas terminen un poco antes
+    max_reverse_speed: 0.19            # reversa muy suave en interiores
+    kp_linear: 0.5                     # menos reactivo (evita oscilación)
+    kp_angular: 2.4
+    kd_angular: 0.2
+    cx_velocity_ema_alpha: 0.6          # más suavizado (era 0.5) — reacción angular más suave
+    centering_deadzone: 0.05
+    centering_suppress_linear_zone: 0.45
+
+    # ── CURVED TRACKING (arco: avanza mientras gira, en vez de rotar parado) ──
+    arc_min_speed: 0.0                # m/s de avance acoplado al giro (0 = rota en el sitio)
+    curve_max_error_x: 0.6              # |error_x| donde el arco se anula (target casi de lado)
+    center_dist_buffer_seconds: 2.0
+    center_dist_min_samples: 3
+    depth_min_valid_m: 0.5
+    depth_max_valid_m: 3.0              # rango más corto: lab es chico
+
+    # ── FSM CORNER + PIVOT ────────────────────────────────────────────────
+    imu_topic: "/k4a/imu"
+    imu_yaw_axis: "z"
+    corner_threshold: 0.45
+    recover_zone: 0.20
+    approach_speed: 0.65                # subido (era 0.5) — aproximación un poco más rápida
+    approach_max_duration_s: 4.0        # un poco más de paciencia (va más lento)
+    pivot_max_angular_speed: 1.8        # subido (era 1.6) — pivote un poco más rápido al recuperar
+    pivot_ramp_duration_s: 0.6        # arranque del giro más suave (era 0.5) — pivote menos brusco
+    pivot_max_angle_rad: 2.5
+    pivot_max_duration_s: 4.0         # fallback temporal: rinde el pivote aunque la IMU calle
+
+    # ── RAMPAS DE ACELERACIÓN / FRENADO (muy suaves en interior) ──────────
+    accel_base: 0.2                  # 0→0.8 m/s en 2.0 s
+    accel_peak: 0.6                   # 0→0.8 m/s en 1.0 s
+    decel_base: 0.2                    # 0.8→0 en ~1.8 s
+    decel_peak: 0.5                   # 0.8→0 en ~0.9 s
+    ramp_urgency_scale: 1.0             # llega al pico con poco error (lab = menos distancia para reaccionar)
+
+    # ── EMERGENCIA (menos brusca: velocidades indoor son bajas) ───────────
+    emergency_distance: 0.5             # m — bajo (target ahora es 0.75, no podemos exigir más colchón)
+    emergency_decel: 3.0                # m/s² — frena de 0.6 m/s a 0 en ~0.06 m
+
+    # ── EVASIÓN DE OBSTÁCULOS (solo indoor: patas de banda transportadora) ─
+    # Lee una franja horizontal del depth como "1D scan" y genera un vector
+    # de repulsión que modifica linear y angular antes de la rampa.
+    obstacle_avoidance_enabled: true
+    obstacle_scan_row_min: 150          # franja del depth donde buscar obstáculos
+    obstacle_scan_row_max: 290          # (img es 640x360 después del resize)
+    obstacle_repulsion_distance: 0.8    # m — empieza a repeler debajo de esto
+    obstacle_critical_distance: 0.35    # m — repulsión máxima a esta distancia
+    obstacle_gain_linear: 1.2           # cuánto frena ante obstáculo enfrente
+    obstacle_gain_angular: 1.5          # cuánto gira para esquivar lateral
+    obstacle_forward_arc_deg: 60.0      # solo considerar arco frontal (±30°)
+    camera_hfov_deg: 92.6              # FOV horizontal del Kinect NFOV
+    obstacle_tiebreaker_after_s: 1.0    # si lleva atorado este tiempo, fuerza giro
+    obstacle_tiebreaker_preference: "left"   # 'left' o 'right' — lado preferido
+
+    # ── RECOVERY (búsqueda más cautelosa en interior) ─────────────────────
+    wait_timeout_s: 5.0
+    reverse_duration_s: 2.5             # retroceso más corto (espacios chicos)
+    search_turn_duration_s: 5.0
+    reverse_speed: 0.10                 # m/s — reversa de búsqueda muy lenta
+    search_turn_speed: 0.4              # rad/s — giros de búsqueda más calmados

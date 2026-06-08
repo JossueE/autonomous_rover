@@ -1,0 +1,5 @@
+# Prefer apt/ROS packages from README.md. This file is only a fallback
+# reference for non-ROS development environments.
+fastapi
+uvicorn
+pydantic

@@ -78,6 +78,8 @@ class TeleopJoycon(Node):
             self.target_angular_velocity = 0.0
 
     def timer_callback(self):
+        if not self.deadman_pressed:
+            return
         twist = Twist()
         twist.linear.x = float(self.target_linear_velocity)
         twist.linear.y = 0.0

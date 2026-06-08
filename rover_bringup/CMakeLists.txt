@@ -37,4 +37,10 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/bringup_all_tui.sh
+  scripts/twist_priority_mux.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

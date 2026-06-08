@@ -32,12 +32,16 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->declare_parameter<double>("planner.sample_distance", 0.0);
     this->declare_parameter<double>("planner.square_size_m", 1.6);
     this->declare_parameter<double>("planner.safe_clear", 0.2);
+    this->declare_parameter<double>("planner.goal_tolerance", 0.4);
     this->declare_parameter<int>("planner.obstacle_inflation_radius_cells", 1);
     this->declare_parameter<double>("planner.obstacle_inflation_radius_m", 0.0);
     this->declare_parameter<int>("planner.branching_factor", 0);
     this->declare_parameter<double>("planner.forward_distance", forward_distance);
     this->declare_parameter<int>("planner.chunk_radius_cells", chunk_radius);
     this->declare_parameter<double>("planner.scale_factor", scale_factor);
+    this->declare_parameter<double>("planner.priority_switch.block_radius_m", priority_switch_block_radius_m_);
+    this->declare_parameter<int>("planner.priority_switch.enable_cycles", priority_switch_enable_cycles_);
+    this->declare_parameter<int>("planner.priority_switch.clear_cycles", priority_switch_clear_cycles_);
     this->declare_parameter<double>("ackermann.wheelbase", 0.0);
     this->declare_parameter<double>("ackermann.max_steering_angle", 0.0);
     this->declare_parameter<double>("differential.linear_step", 0.0);
@@ -99,6 +103,9 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     this->get_parameter("planner.forward_distance", forward_distance);
     this->get_parameter("planner.chunk_radius_cells", chunk_radius);
     this->get_parameter("planner.scale_factor", scale_factor);
+    this->get_parameter("planner.priority_switch.block_radius_m", priority_switch_block_radius_m_);
+    this->get_parameter("planner.priority_switch.enable_cycles", priority_switch_enable_cycles_);
+    this->get_parameter("planner.priority_switch.clear_cycles", priority_switch_clear_cycles_);
     this->get_parameter("ackermann.wheelbase", configured_ackermann_wheelbase);
     this->get_parameter("ackermann.max_steering_angle", configured_ackermann_max_steering_angle);
     this->get_parameter("differential.linear_step", differential_linear_step_);
@@ -155,6 +162,14 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
             scale_factor);
         scale_factor = 1.0;
     }
+    if (priority_switch_block_radius_m_ <= 0.0) {
+        RCLCPP_WARN(this->get_logger(),
+            "planner.priority_switch.block_radius_m must be > 0 (got %f); falling back to 0.20.",
+            priority_switch_block_radius_m_);
+        priority_switch_block_radius_m_ = 0.20;
+    }
+    priority_switch_enable_cycles_ = std::max(1, priority_switch_enable_cycles_);
+    priority_switch_clear_cycles_ = std::max(1, priority_switch_clear_cycles_);
     branching_factor = selectConfiguredInt(configured_branching_factor, legacy_branching_factor);
     ackermann_wheelbase_ = selectConfiguredDouble(configured_ackermann_wheelbase, legacy_wheelbase);
     ackermann_max_steering_angle_ =
@@ -196,8 +211,9 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     sdv_trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>(
         "/sdv_trajectory", 10);
 
+    const auto global_planner_marker_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
     global_planner_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-        "/global_planner", 10);
+        "/global_planner", global_planner_marker_qos);
 
     global_planner_occupancy_grid_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
         global_planner_occupancy_output_topic_, 10);
@@ -265,6 +281,14 @@ path_planning::path_planning() : Node("path_planning"), tf2_buffer(this->get_clo
     rebuildGlobalPlanner();
     params_handler_ = this->add_on_set_parameters_callback(
         std::bind(&path_planning::onPlannerParameters, this, std::placeholders::_1));
+
+    // Initialize Action Server
+    action_server_ = rclcpp_action::create_server<NavigateToGoal>(
+        this,
+        "navigate_to_goal",
+        std::bind(&path_planning::handle_goal, this, std::placeholders::_1, std::placeholders::_2),
+        std::bind(&path_planning::handle_cancel, this, std::placeholders::_1),
+        std::bind(&path_planning::handle_accepted, this, std::placeholders::_1));
 }
 
 
@@ -274,20 +298,117 @@ path_planning::~path_planning()
 
 void path_planning::rebuildGlobalPlanner()
 {
+    std::lock_guard<std::mutex> lock(global_planner_mutex_);
+    rebuildGlobalPlannerLocked();
+}
+
+void path_planning::rebuildGlobalPlannerLocked()
+{
+    bool has_start_heading = false;
+    double start_heading = 0.0;
+    {
+        std::lock_guard<std::mutex> state_lock(car_state_mutex_);
+        has_start_heading = car_state_valid_;
+        if (has_start_heading)
+            start_heading = car_state_->heading;
+    }
+
     global_planner_ = std::make_shared<GlobalPlanner>(
         x_offset_, y_offset_, map_path_, start_lanelet_id_, end_lanelet_id_,
         start_lanelet_name_, end_lanelet_name_, global_planner_resolution_,
         global_planner_close_radius_, global_planner_close_iters_,
-        global_planner_outside_value_, global_planner_frame_id_);
+        global_planner_outside_value_, global_planner_frame_id_,
+        has_start_heading, start_heading,
+        global_planner_has_goal_pose_,
+        global_planner_goal_x_, global_planner_goal_y_);
 
-    all_waypoints_from_global_planner_ = global_planner_->getAllAllWaypointsStruct();
-    publishGlobalPlanner();
+    global_planner_waypoints_all_ = global_planner_->getAllAllWaypointsStruct();
+    priority_blocked_cycles_ = 0;
+    priority_clear_cycles_ = 0;
+    updateActiveGlobalPlannerWaypointsLocked(false);
+    publishGlobalPlannerLocked();
     if (global_planner_->isOccupancyGridReady())
     {
         global_planner_occupancy_grid_ = global_planner_->getOccupancyGrid();
         publishGlobalPlannerOccupancyGrid();
         global_map_ = std::make_shared<nav_msgs::msg::OccupancyGrid>(global_planner_occupancy_grid_);
     }
+}
+
+void path_planning::updateActiveGlobalPlannerWaypointsLocked(bool include_alternatives)
+{
+    global_planner_alternatives_enabled_ = include_alternatives;
+    all_waypoints_from_global_planner_.clear();
+
+    if (include_alternatives) {
+        all_waypoints_from_global_planner_ = global_planner_waypoints_all_;
+        return;
+    }
+
+    all_waypoints_from_global_planner_.reserve(global_planner_waypoints_all_.size());
+    for (const auto &waypoint : global_planner_waypoints_all_) {
+        if (waypoint.priority == 1) {
+            all_waypoints_from_global_planner_.push_back(waypoint);
+        }
+    }
+}
+
+bool path_planning::updateStartLaneletFromCurrentPoseLocked(bool allow_nearest_fallback, const char *reason)
+{
+    if (!global_planner_)
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: global planner is not initialized.");
+        return false;
+    }
+
+    double x = 0.0;
+    double y = 0.0;
+    bool pose_valid = false;
+    {
+        std::lock_guard<std::mutex> state_lock(car_state_mutex_);
+        pose_valid = car_state_valid_;
+        if (pose_valid)
+        {
+            x = car_state_->x;
+            y = car_state_->y;
+        }
+    }
+
+    if (!pose_valid)
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: robot pose is not valid.");
+        return false;
+    }
+
+    int current_lanelet_id = 0;
+    bool inside_lanelet = false;
+    if (!global_planner_->findLaneletAt(x, y, current_lanelet_id, inside_lanelet))
+    {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Cannot update start lanelet: no lanelet found near current pose (%.2f, %.2f).",
+            x, y);
+        return false;
+    }
+
+    if (!inside_lanelet && !allow_nearest_fallback)
+    {
+        RCLCPP_DEBUG(this->get_logger(),
+            "Current pose is near lanelet_id=%d but not inside; keeping start lanelet unchanged.",
+            current_lanelet_id);
+        return false;
+    }
+
+    if (current_lanelet_id == start_lanelet_id_ && start_lanelet_name_.empty())
+        return false;
+
+    start_lanelet_id_ = current_lanelet_id;
+    start_lanelet_name_.clear();
+    RCLCPP_INFO(this->get_logger(),
+        "Global planner start rebased to lanelet_id=%d from current pose (inside=%s, reason=%s).",
+        start_lanelet_id_, inside_lanelet ? "true" : "false", reason ? reason : "unknown");
+    return true;
 }
 
 rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
@@ -333,15 +454,17 @@ rcl_interfaces::msg::SetParametersResult path_planning::onPlannerParameters(
     }
 
     if (should_rebuild) {
+        std::lock_guard<std::mutex> lock(global_planner_mutex_);
         start_lanelet_id_ = new_start_id;
         end_lanelet_id_ = new_end_id;
         start_lanelet_name_ = new_start_name;
         end_lanelet_name_ = new_end_name;
+        global_planner_has_goal_pose_ = false;
         RCLCPP_INFO(this->get_logger(),
             "Rebuilding global planner: start_id=%d end_id=%d start_name='%s' end_name='%s'",
             start_lanelet_id_, end_lanelet_id_,
             start_lanelet_name_.c_str(), end_lanelet_name_.c_str());
-        rebuildGlobalPlanner();
+        rebuildGlobalPlannerLocked();
     }
 
     return result;
@@ -356,20 +479,24 @@ void path_planning::getCurrentRobotState()
     try
     {
         pose_tf = tf2_buffer.lookupTransform("map", pose_frame_, tf2::TimePointZero).transform;
-        car_state_->x = pose_tf.translation.x;
-        car_state_->y = pose_tf.translation.y;
-        car_state_->z = pose_tf.translation.z + z_offset_;
         tf2::Quaternion quat;
         tf2::fromMsg(pose_tf.rotation, quat);
         double roll, pitch, yaw;
         tf2::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-        car_state_->heading = yaw;
-        car_state_valid_ = true;
+        {
+            std::lock_guard<std::mutex> lk(car_state_mutex_);
+            car_state_->x = pose_tf.translation.x;
+            car_state_->y = pose_tf.translation.y;
+            car_state_->z = pose_tf.translation.z + z_offset_;
+            car_state_->heading = yaw;
+            car_state_valid_ = true;
+        }
     }
     catch (tf2::TransformException &ex)
     {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
             "Transform error (map <- %s): %s", pose_frame_.c_str(), ex.what());
+        std::lock_guard<std::mutex> lk(car_state_mutex_);
         car_state_valid_ = false;
     }
 }
@@ -379,15 +506,26 @@ void path_planning::getCurrentRobotState()
 // =============================
 void path_planning::publishGlobalPlanner()
 {
+    std::lock_guard<std::mutex> lock(global_planner_mutex_);
+    publishGlobalPlannerLocked();
+}
+
+void path_planning::publishGlobalPlannerLocked()
+{
     RCLCPP_DEBUG(this->get_logger(), "Publishing global planner with %zu waypoints",
                  all_waypoints_from_global_planner_.size());
     global_planner_markers_.markers.clear();
 
-    // Clear previous text markers
-    visualization_msgs::msg::Marker clear_text;
-    clear_text.header.frame_id = "map";
-    clear_text.header.stamp = this->now();
-    clear_text.action = visualization_msgs::msg::Marker::DELETEALL;
+    // Clear previous route and text markers so priority-mode switches do not
+    // leave stale alternatives visible in RViz.
+    visualization_msgs::msg::Marker clear_route;
+    clear_route.header.frame_id = "map";
+    clear_route.header.stamp = this->now();
+    clear_route.action = visualization_msgs::msg::Marker::DELETEALL;
+    clear_route.ns = "global_planner";
+    global_planner_markers_.markers.push_back(clear_route);
+
+    visualization_msgs::msg::Marker clear_text = clear_route;
     clear_text.ns = "global_planner_text";
     global_planner_markers_.markers.push_back(clear_text);
 
@@ -510,9 +648,34 @@ void path_planning::obstacle_info_callback(const path_planning_dynamic::msg::Obs
             "Obstacle collection received with %zu obstacles", msg->obstacles.size());
     }
     getCurrentRobotState();
-    publishGlobalPlanner();
-    RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
-    map_combination(msg);
+
+    bool has_active_goal = false;
+    {
+        std::lock_guard<std::mutex> action_lock(action_server_mutex_);
+        has_active_goal = active_goal_handle_ && active_goal_handle_->is_active();
+    }
+
+    {
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        if (has_active_goal &&
+            updateStartLaneletFromCurrentPoseLocked(false, "active navigation lanelet rebase"))
+        {
+            rebuildGlobalPlannerLocked();
+        }
+        else
+        {
+            publishGlobalPlannerLocked();
+        }
+
+        if (has_active_goal) {
+            RCLCPP_DEBUG(this->get_logger(), "Path planning map combination update.");
+            map_combination(msg);
+        } else {
+            // No active navigation goal — publish empty trajectory so NMPC idles.
+            TreeFlat empty;
+            publishTrajectoryPath(empty, -1);
+        }
+    }
 }
 
 cv::Mat path_planning::toMat(const nav_msgs::msg::OccupancyGrid &map)
@@ -723,6 +886,111 @@ void path_planning::buildWindowMask(cv::Mat &window_mask,
     window_mask = cv::Mat(rescaled_chunk_->info.height, rescaled_chunk_->info.width,
                           CV_8UC1, cv::Scalar(0));
     cv::fillConvexPoly(window_mask, window_polygon, cv::Scalar(255));
+}
+
+bool path_planning::isMainPriorityBlockedInGrid(
+    const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid,
+    bool &blocked) const
+{
+    blocked = false;
+    if (global_planner_waypoints_all_.empty() ||
+        dynamic_obstacle_grid.info.resolution <= 0.0 ||
+        dynamic_obstacle_grid.info.width == 0 ||
+        dynamic_obstacle_grid.info.height == 0 ||
+        dynamic_obstacle_grid.data.size() !=
+            static_cast<size_t>(dynamic_obstacle_grid.info.width) *
+                static_cast<size_t>(dynamic_obstacle_grid.info.height)) {
+        return false;
+    }
+
+    const int width = static_cast<int>(dynamic_obstacle_grid.info.width);
+    const int height = static_cast<int>(dynamic_obstacle_grid.info.height);
+    const double resolution = dynamic_obstacle_grid.info.resolution;
+    const int radius_cells = std::max(
+        1, static_cast<int>(std::round(priority_switch_block_radius_m_ / resolution)));
+    const int line_thickness = std::max(1, radius_cells * 2 + 1);
+
+    cv::Mat main_path_mask(height, width, CV_8UC1, cv::Scalar(0));
+    std::vector<cv::Point> main_points;
+    main_points.reserve(global_planner_waypoints_all_.size());
+
+    for (const auto &waypoint : global_planner_waypoints_all_) {
+        if (waypoint.priority != 1) {
+            continue;
+        }
+        int gx = 0;
+        int gy = 0;
+        worldToGrid(waypoint.x, waypoint.y, dynamic_obstacle_grid.info, gx, gy);
+        if (isInsideGrid(gx, gy, dynamic_obstacle_grid.info)) {
+            main_points.emplace_back(gx, gy);
+        }
+    }
+
+    if (main_points.empty()) {
+        return false;
+    }
+
+    for (size_t i = 1; i < main_points.size(); ++i) {
+        cv::line(main_path_mask, main_points[i - 1], main_points[i],
+                 cv::Scalar(255), line_thickness, cv::LINE_8);
+    }
+    for (const auto &point : main_points) {
+        cv::circle(main_path_mask, point, radius_cells, cv::Scalar(255), cv::FILLED);
+    }
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *mask_row = main_path_mask.ptr<uint8_t>(y);
+        for (int x = 0; x < width; ++x) {
+            if (mask_row[x] == 0) {
+                continue;
+            }
+            const size_t index = static_cast<size_t>(y) *
+                                     static_cast<size_t>(dynamic_obstacle_grid.info.width) +
+                                 static_cast<size_t>(x);
+            if (dynamic_obstacle_grid.data[index] >= 100) {
+                blocked = true;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
+void path_planning::updatePrioritySwitchLocked(
+    const nav_msgs::msg::OccupancyGrid &dynamic_obstacle_grid)
+{
+    bool main_priority_blocked = false;
+    if (!isMainPriorityBlockedInGrid(dynamic_obstacle_grid, main_priority_blocked)) {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+            "Priority switch could not evaluate priority 1 in the local chunk; keeping current mode (%s).",
+            global_planner_alternatives_enabled_ ? "alternatives" : "priority_1_only");
+        return;
+    }
+
+    if (main_priority_blocked) {
+        ++priority_blocked_cycles_;
+        priority_clear_cycles_ = 0;
+        if (!global_planner_alternatives_enabled_ &&
+            priority_blocked_cycles_ >= priority_switch_enable_cycles_) {
+            updateActiveGlobalPlannerWaypointsLocked(true);
+            RCLCPP_WARN(this->get_logger(),
+                "Priority 1 blocked for %d cycle(s); enabling global planner alternatives (priorities 2/3/4).",
+                priority_blocked_cycles_);
+            publishGlobalPlannerLocked();
+        }
+        return;
+    }
+
+    ++priority_clear_cycles_;
+    priority_blocked_cycles_ = 0;
+    if (global_planner_alternatives_enabled_ &&
+        priority_clear_cycles_ >= priority_switch_clear_cycles_) {
+        updateActiveGlobalPlannerWaypointsLocked(false);
+        RCLCPP_INFO(this->get_logger(),
+            "Priority 1 clear for %d cycle(s); returning to priority 1 only.",
+            priority_clear_cycles_);
+        publishGlobalPlannerLocked();
+    }
 }
 
 // ---------- map_combination ----------
@@ -962,6 +1230,8 @@ void path_planning::map_combination(const path_planning_dynamic::msg::ObstacleCo
         fill_obstacle_interior(polygon_vertices, value_to_mark);
     }
 
+    updatePrioritySwitchLocked(dynamic_obstacle_grid);
+
     // Crop the published dynamic obstacle grid to the window bounding rectangle.
     nav_msgs::msg::OccupancyGrid published_dynamic_obstacle_grid = dynamic_obstacle_grid;
     cv::Rect window_bounds = cv::boundingRect(window_polygon);
@@ -1050,8 +1320,40 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
     const int D = std::max(0, tree_depth);
     const int EFFECTIVE_DEPTH = (D > 0) ? (D - 1) : 0;
 
-    const double cs0 = std::cos(root_state.heading);
-    const double ss0 = std::sin(root_state.heading);
+    // Anchor the forward/lateral/heading cost to the GLOBAL ROUTE tangent near
+    // the robot instead of the robot's (possibly misaligned) current heading.
+    // The previous behaviour froze the reference at root_state.heading, so any
+    // route that started behind/beside the robot incurred a forward+heading
+    // penalty with no offsetting reward — the best leaf collapsed back to the
+    // root pose and the robot never turned to pick the route up. Using the
+    // nearest priority-1 (centerline) waypoint's heading lets the planner choose
+    // in-place rotation to align with the route. Falls back to the robot heading
+    // when no route waypoints are available.
+    double ref_heading = root_state.heading;
+    if (use_waypoints) {
+        const double cos_robot = std::cos(root_state.heading);
+        const double sin_robot = std::sin(root_state.heading);
+        double best_d2 = std::numeric_limits<double>::infinity();
+        for (const auto& wp : all_waypoints_from_global_planner_) {
+            if (wp.priority != 1) continue;   // priority-1 = main centerline
+            // Guard: skip waypoints whose heading is opposite to the robot's current
+            // heading (dot product < 0 means > 90° apart). This prevents a backward-
+            // pointing waypoint — from a mis-oriented lanelet — from inverting the
+            // A* forward reward and stalling the robot.
+            const double dot = cos_robot * std::cos(wp.heading) + sin_robot * std::sin(wp.heading);
+            if (dot < 0.0) continue;
+            const double ddx = wp.x - root_state.x;
+            const double ddy = wp.y - root_state.y;
+            const double d2 = ddx * ddx + ddy * ddy;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                ref_heading = wp.heading;
+            }
+        }
+    }
+
+    const double cs0 = std::cos(ref_heading);
+    const double ss0 = std::sin(ref_heading);
 
     size_t max_nodes = 1;
     size_t powB = 1;
@@ -1215,7 +1517,7 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
             const double dy = fn.state.y - root_state.y;
             const double lateral = -dx * ss0 + dy * cs0;
             const double head_err =
-                std::fabs(wrapAngle(fn.state.heading - root_state.heading));
+                std::fabs(wrapAngle(fn.state.heading - ref_heading));
 
             const double total =
                 g + W_LAT * std::fabs(lateral) + W_HEAD * head_err;
@@ -1250,7 +1552,7 @@ int path_planning::generateTrajectoryTreeImpl(const State& root_state, TreeFlat&
             const double dy = fn.state.y - root_state.y;
             const double lateral = -dx * ss0 + dy * cs0;
             const double head_err =
-                std::fabs(wrapAngle(fn.state.heading - root_state.heading));
+                std::fabs(wrapAngle(fn.state.heading - ref_heading));
 
             const double total =
                 g + W_LAT * std::fabs(lateral) + W_HEAD * head_err;
@@ -1400,6 +1702,8 @@ void path_planning::buildWaypointDistanceFields()
 
     drawByPriority(1, bin1, has_wp1_);
     drawByPriority(2, bin2, has_wp2_);
+    drawByPriority(3, bin2, has_wp2_);
+    drawByPriority(4, bin2, has_wp2_);
 
     // If there is no prio-1 in chunk, keep bin1 empty; same for prio-2.
     auto toMetersDist = [&](const cv::Mat& bin, cv::Mat& out_m) {
@@ -1673,6 +1977,241 @@ void path_planning::publishTrajectoryPath(const TreeFlat& flat, int leaf_idx)
     sdv_trajectory_pub_->publish(path_msg);
 }
 
+
+// ─── Action Server Callbacks ──────────────────────────────────────────
+
+rclcpp_action::GoalResponse path_planning::handle_goal(
+    const rclcpp_action::GoalUUID & uuid,
+    std::shared_ptr<const NavigateToGoal::Goal> goal)
+{
+    RCLCPP_INFO(this->get_logger(), "Action Server: Received goal request for location '%s'", goal->location_name.c_str());
+    (void)uuid;
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+}
+
+rclcpp_action::CancelResponse path_planning::handle_cancel(
+    const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    RCLCPP_INFO(this->get_logger(), "Action Server: Received cancel request");
+    (void)goal_handle;
+    return rclcpp_action::CancelResponse::ACCEPT;
+}
+
+void path_planning::handle_accepted(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    std::lock_guard<std::mutex> lock(action_server_mutex_);
+    if (active_goal_handle_ && active_goal_handle_->is_active()) {
+        RCLCPP_INFO(this->get_logger(), "Action Server: Preempting active goal");
+        auto result = std::make_shared<NavigateToGoal::Result>();
+        result->success = false;
+        result->message = "Preempted by new goal";
+        active_goal_handle_->abort(result);
+    }
+    active_goal_handle_ = goal_handle;
+
+    // Capture shared ownership so the node cannot be destroyed under the thread.
+    auto self = std::static_pointer_cast<path_planning>(shared_from_this());
+    std::thread([self, goal_handle]() {
+        self->execute_navigation(goal_handle);
+    }).detach();
+}
+
+void path_planning::execute_navigation(const std::shared_ptr<GoalHandleNavigateToGoal> goal_handle)
+{
+    const auto goal = goal_handle->get_goal();
+    RCLCPP_INFO(this->get_logger(), "Action Server: Starting navigation execution to '%s' (lanelet: '%s')",
+                goal->location_name.c_str(), goal->lanelet_name.c_str());
+
+    // 1. Rebuild global planner for target lanelet dynamically
+    if (!goal->lanelet_name.empty())
+    {
+        getCurrentRobotState();
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        global_planner_goal_x_ = goal->target_pose.pose.position.x;
+        global_planner_goal_y_ = goal->target_pose.pose.position.y;
+        global_planner_has_goal_pose_ =
+            (global_planner_goal_x_ != 0.0 || global_planner_goal_y_ != 0.0);
+        updateStartLaneletFromCurrentPoseLocked(true, "new navigation goal");
+
+        // Resolve the goal lanelet to an *id* before rebuilding so the planner
+        // never hard-fails on a name mismatch (accents/whitespace/typo). Prefer
+        // an exact name match; otherwise fall back to the nearest lanelet to the
+        // goal pose. Passing an id (with the name cleared) means the rebuilt
+        // GlobalPlanner constructor cannot bail out in resolveLaneletName.
+        int resolved_end_id = 0;
+        bool resolved_by_name = false;
+        bool resolved_by_pose = false;
+        if (global_planner_)
+        {
+            if (global_planner_->resolveLaneletName(goal->lanelet_name, resolved_end_id))
+            {
+                resolved_by_name = true;
+            }
+            else
+            {
+                const double gx = goal->target_pose.pose.position.x;
+                const double gy = goal->target_pose.pose.position.y;
+                bool inside = false;
+                if ((gx != 0.0 || gy != 0.0) &&
+                    global_planner_->findLaneletAt(gx, gy, resolved_end_id, inside))
+                {
+                    resolved_by_pose = true;
+                    RCLCPP_WARN(this->get_logger(),
+                        "Action Server: goal lanelet name '%s' not found; falling back to "
+                        "nearest lanelet_id=%d to goal pose (%.2f, %.2f).",
+                        goal->lanelet_name.c_str(), resolved_end_id, gx, gy);
+                }
+            }
+        }
+
+        if (resolved_by_name || resolved_by_pose)
+        {
+            end_lanelet_id_ = resolved_end_id;
+            end_lanelet_name_.clear();  // use id path; constructor cannot hard-fail
+            RCLCPP_INFO(this->get_logger(),
+                "Action Server: Rebuilding global planner from lanelet_id=%d to lanelet_id=%d (%s).",
+                start_lanelet_id_, end_lanelet_id_,
+                resolved_by_name ? "name match" : "nearest-to-pose fallback");
+        }
+        else
+        {
+            // Last resort: keep the name and let the constructor try (and log) it.
+            end_lanelet_name_ = goal->lanelet_name;
+            RCLCPP_ERROR(this->get_logger(),
+                "Action Server: could not resolve goal lanelet '%s' by name or goal pose; "
+                "planner build may fail.", goal->lanelet_name.c_str());
+        }
+        rebuildGlobalPlannerLocked();
+    }
+
+    auto feedback = std::make_shared<NavigateToGoal::Feedback>();
+    auto result = std::make_shared<NavigateToGoal::Result>();
+
+    rclcpp::Rate rate(5.0); // 5Hz tracking rate
+    double target_x = goal->target_pose.pose.position.x;
+    double target_y = goal->target_pose.pose.position.y;
+
+    // Capture the end of the global plan (the lanelet centerline end). Used both
+    // to substitute for a missing target_pose and as a secondary arrival
+    // condition: a saved goal pose may sit slightly outside the drivable corridor
+    // and never be reachable within tolerance, but reaching the centerline end
+    // means we have arrived at the lanelet.
+    double plan_end_x = 0.0, plan_end_y = 0.0;
+    bool have_plan_end = false;
+    {
+        std::lock_guard<std::mutex> planner_lock(global_planner_mutex_);
+        if (!all_waypoints_from_global_planner_.empty()) {
+            const auto& last_wp = all_waypoints_from_global_planner_.back();
+            plan_end_x = last_wp.x;
+            plan_end_y = last_wp.y;
+            have_plan_end = true;
+        }
+    }
+
+    // When the client sends only a lanelet_name and leaves target_pose at its
+    // zero default, derive the target from the last global-plan waypoint so the
+    // goal-reached check has a real position to work against.
+    if (target_x == 0.0 && target_y == 0.0) {
+        if (have_plan_end) {
+            target_x = plan_end_x;
+            target_y = plan_end_y;
+            RCLCPP_INFO(this->get_logger(),
+                "Action Server: target_pose not set; using last plan waypoint (%.2f, %.2f)",
+                target_x, target_y);
+        } else {
+            auto res = std::make_shared<NavigateToGoal::Result>();
+            res->success = false;
+            res->message = "No target_pose and no global plan waypoints available";
+            goal_handle->abort(res);
+            RCLCPP_ERROR(this->get_logger(), "Action Server: %s", res->message.c_str());
+            return;
+        }
+    }
+    double total_distance = 0.0;
+    double start_time = this->now().seconds();
+    double last_x, last_y;
+    {
+        std::lock_guard<std::mutex> lk(car_state_mutex_);
+        last_x = car_state_->x;
+        last_y = car_state_->y;
+    }
+
+    // Dedicated arrival tolerance. Previously this reused planner.safe_clear
+    // (0.2 m, the obstacle-clearance margin), which is far too tight for a
+    // differential rover under NMPC tracking and caused goals to never declare
+    // success. goal_tolerance is a separate, sanely-defaulted parameter.
+    double tolerance = 0.4;
+    this->get_parameter("planner.goal_tolerance", tolerance);
+    if (tolerance <= 0.0) {
+        tolerance = 0.4;
+    }
+
+    while (rclcpp::ok() && goal_handle->is_active()) {
+        if (goal_handle->is_canceling()) {
+            std::lock_guard<std::mutex> lk(action_server_mutex_);
+            if (goal_handle->is_active() || goal_handle->is_canceling()) {
+                result->success = false;
+                result->message = "Goal canceled by client";
+                result->total_distance = total_distance;
+                result->total_time = this->now().seconds() - start_time;
+                goal_handle->canceled(result);
+                RCLCPP_INFO(this->get_logger(), "Action Server: Goal cancelled");
+            }
+            return;
+        }
+
+        double rx, ry;
+        {
+            std::lock_guard<std::mutex> lk(car_state_mutex_);
+            rx = car_state_->x;
+            ry = car_state_->y;
+        }
+
+        double d_step = std::hypot(rx - last_x, ry - last_y);
+        total_distance += d_step;
+        last_x = rx;
+        last_y = ry;
+
+        double dist_remaining = std::hypot(rx - target_x, ry - target_y);
+
+        // Secondary arrival metric: distance to the end of the drivable plan.
+        // When the goal pose sits just outside the corridor, the rover stops at
+        // the centerline end; treat that as arrival too.
+        double dist_to_plan_end = std::numeric_limits<double>::infinity();
+        if (have_plan_end) {
+            dist_to_plan_end = std::hypot(rx - plan_end_x, ry - plan_end_y);
+        }
+        const double effective_remaining = std::min(dist_remaining, dist_to_plan_end);
+
+        feedback->distance_remaining = dist_remaining;
+        feedback->estimated_time_remaining = dist_remaining / 0.3; // estimated at 0.3m/s speed
+        feedback->current_pose.header.frame_id = "map";
+        feedback->current_pose.header.stamp = this->now();
+        feedback->current_pose.pose.position.x = rx;
+        feedback->current_pose.pose.position.y = ry;
+        feedback->current_pose.pose.position.z = 0.0;
+        feedback->planner_status = "tracking";
+
+        goal_handle->publish_feedback(feedback);
+
+        // Check if goal reached (either the goal pose or the end of the plan).
+        if (effective_remaining <= tolerance) {
+            std::lock_guard<std::mutex> lk(action_server_mutex_);
+            if (!goal_handle->is_active()) {
+                return;  // preempted by a newer goal between the distance check and here
+            }
+            RCLCPP_INFO(this->get_logger(), "Action Server: Goal reached! Remaining distance is %.2fm", effective_remaining);
+            result->success = true;
+            result->message = "Goal reached successfully";
+            result->total_distance = total_distance;
+            result->total_time = this->now().seconds() - start_time;
+            goal_handle->succeed(result);
+            return;
+        }
+
+        rate.sleep();
+    }
+}
 
 int main(int argc, char *argv[])
 {

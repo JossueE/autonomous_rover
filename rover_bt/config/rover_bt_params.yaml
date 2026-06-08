@@ -1,0 +1,97 @@
+# ─── rover_bt parameters ───────────────────────────────────────────────
+# All tunable parameters for the rover_bt behavior tree node.
+
+rover_bt_node:
+  ros__parameters:
+    # ── BT engine ──
+    bt_tick_rate: 10.0                          # Hz
+    tree_xml: ""                                # empty → use installed default
+
+    # ── Topics ──
+    cmd_vel_topic: "/cmd_vel_safe"
+    odom_topic: "/rtabmap/odom"
+    rtabmap_odom_info_topic: "/rtabmap/odom_info_lite"
+    amcl_pose_topic: "/amcl_robot_pose"
+    scan_topic: "/scan"
+    pointcloud_topic: "/k4a/points2"
+    imu_topic: "/k4a/imu"                        # Azure Kinect DK onboard IMU (raw). Filtered = /k4a/imu_filtered
+    wheel_left_topic: "wheel/left_data"          # encoder feedback (both zlac706 + zlac8015d drivers)
+    wheel_right_topic: "wheel/right_data"
+    trajectory_topic: "/sdv_trajectory"
+    command_topic: "/rover_bt/commands"
+    joy_topic: "/joy"
+    status_topic: "/rover_bt/status"
+
+    # ── Person tracker (PERSON_TRACK mode) ──
+    # enable is asserted only while in PERSON_TRACK; the follower publishes to
+    # /cmd_vel_person (mux'd below /cmd_vel_safe) and reports its coarse FSM state.
+    person_enable_topic: "/person_tracker/enable"
+    person_profile_topic: "/person_tracker/profile"
+    person_status_topic: "/person_tracker/status"
+
+    # ── AMCL fallback ──
+    amcl_pose_timeout: 2.0                      # seconds without AMCL → use odom
+
+    # ── Navigation supervision ──
+    goal_timeout: 30.0                          # seconds with no progress → stall
+    planner_heartbeat_timeout: 10.0             # seconds without /sdv_trajectory
+    nmpc_stall_velocity: 0.02                   # m/s — below this = not moving
+    nmpc_stall_timeout: 15.0                    # seconds at near-zero velocity
+    goal_tolerance: 0.3                         # meters — goal reached threshold
+
+    # ── Sensor health ──
+    monitor_lidar: false                        # real HW has no lidar; sim launch sets this true
+    lidar_stale_timeout: 5.0
+    camera_stale_timeout: 5.0
+    odom_stale_timeout: 3.0                     # critical — triggers e-stop
+    imu_stale_timeout: 5.0
+    motor_stale_timeout: 5.0                    # wheel-encoder liveness (warn watchdog; critical gate uses 1.5s in the tree)
+
+    # ── TTS ──
+    tts_enabled: true
+    tts_topic: "/rover_bt/tts/say"
+    piper_bin: ""                               # deprecated: Python voice bridge owns Piper playback
+    piper_model: ""                             # deprecated: Python voice bridge owns Piper playback
+
+    # ── Locations ──
+    lanelet2_map: "package://rover_bringup/maps/test1.osm"  # path to .osm map for location names
+    dynamic_waypoints_file: ""                  # path to persisted dynamic locations
+
+    # ── RTAB-Map lifecycle ──
+    rtabmap_rgb_topic: "/k4a/rgb/image_raw"
+    rtabmap_depth_topic: "/k4a/depth_to_rgb/image_raw"
+    rtabmap_camera_info_topic: "/k4a/rgb/camera_info"
+    rtabmap_scan_cloud_topic: "/k4a/points2"
+    rtabmap_imu_topic: "/k4a/imu_filtered"
+
+    # ── Teleop voice defaults ──
+    teleop_linear_speed: 0.3                    # m/s
+    teleop_angular_speed: 0.5                   # rad/s
+    teleop_move_duration: 2.0                   # seconds
+    teleop_turn_duration: 1.5                   # seconds
+
+    # ── Patrol ──
+    # Ordered list of location names, e.g. ["cocina", "sala"].
+    # Leave this line commented out for "no patrol": an empty YAML list
+    # (patrol_waypoints: []) loads as PARAMETER_NOT_SET and aborts the node
+    # at startup, so do not use []. The node defaults to an empty list.
+    # patrol_waypoints: ["cocina"]
+
+voice_command_node:
+  ros__parameters:
+    # ── STT / Wake word ──
+    stt_model_name: "base"               # must match a Whisper model in config/models.yml
+
+    wake_word: "comando"
+    wake_variants: ["command"]  # List of ASR variants to recognize as wake command. Repeats increase recognition robustness.
+    wake_timeout_sec: 10.0               # seconds to wait for command before sleeping
+
+    # ── Topics / files ──
+    command_topic: "/rover_bt/commands"
+    tts_topic: "/rover_bt/tts/say"
+    # waypoints_file: ""                 # defaults to config/waypoints.yaml in package
+
+    # ── Audio Interface ──
+    audio_device_index: -1               # -1 to search and fallback dynamically (pipewire, pulse, default)
+    audio_sample_rate: 16000             # target capture rate for Vosk/Whisper
+    audio_channels: 1                    # number of capture channels (typically 1 for mono STT)

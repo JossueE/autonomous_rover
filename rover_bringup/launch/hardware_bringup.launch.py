@@ -1,152 +1,150 @@
 import os
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-def generate_launch_description():
-    # 1. Declaración de argumentos de lanzamiento (visibles desde la terminal)
-    motors_port_arg = DeclareLaunchArgument(
-        'motors_port',
-        default_value='/dev/ttyUSB0',
-        description='Puerto serial para el driver de motores ZLAC8015D'
+
+def _load_robot_profile(robot_name):
+    profiles_path = os.path.join(
+        get_package_share_directory('rover_bringup'),
+        'config',
+        'robot_profiles.yaml',
     )
+    with open(profiles_path, 'r') as profiles_file:
+        profiles = yaml.safe_load(profiles_file) or {}
 
-    imu_port_arg = DeclareLaunchArgument(
-        'imu_port',
-        default_value='/dev/ttyUSB1',
-        description='Puerto serial para el sensor IMU WitMotion'
-    )
+    robots = profiles.get('robots', {})
+    if robot_name not in robots:
+        raise RuntimeError(f"Unknown robot profile '{robot_name}'. Expected one of: {', '.join(sorted(robots))}")
+    return robots[robot_name]
 
-    use_imu_odometry_arg = DeclareLaunchArgument(
-        'use_imu_odometry',
-        default_value='true',
-        description='true: odometria mixta (ruedas + IMU + EKF), false: solo ruedas'
-    )
 
-    use_wheel_odometry_arg = DeclareLaunchArgument(
-        'use_wheel_odometry',
-        default_value='true',
-        description='true: habilita odometria por ruedas, false: deja odom->base_footprint a otra fuente'
-    )
-
-    # 2. Captura de los valores de los argumentos
-    motors_port = LaunchConfiguration('motors_port')
-    imu_port = LaunchConfiguration('imu_port')
-    use_imu_odometry = LaunchConfiguration('use_imu_odometry')
-    use_wheel_odometry = LaunchConfiguration('use_wheel_odometry')
-    use_imu_wheel_odometry = PythonExpression(["'", use_wheel_odometry, "' == 'true' and '", use_imu_odometry, "' == 'true'"])
-    use_wheels_only_odometry = PythonExpression(["'", use_wheel_odometry, "' == 'true' and '", use_imu_odometry, "' != 'true'"])
-
-    # Ruta al archivo de configuración EKF (asegúrate de que este archivo exista)
-    # Recomiendo ponerlo en rover_bringup/config/ekf.yaml
-    pkg_bringup = get_package_share_directory('rover_bringup')
+def _launch_setup(context, *args, **kwargs):
+    robot_name = LaunchConfiguration('robot').perform(context)
+    log_level = LaunchConfiguration('log_level')
+    profile = _load_robot_profile(robot_name)
+    driver_package = profile['driver_package']
+    wheels_separation = float(profile['wheels_separation'])
+    wheel_radius = float(profile['wheel_radius'])
+    max_linear_vel = float(profile['max_linear_vel'])
+    max_angular_vel = float(profile['max_angular_vel'])
     pkg_robot_core = get_package_share_directory('robot_core')
-    ekf_config_path = os.path.join(pkg_bringup, 'config', 'ekf.yaml')
 
     robot_state_publisher_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_robot_core, 'launch', 'robot_state_publisher.launch.py')
-        )
+        ),
+        launch_arguments={
+            'wheel_separation': str(wheels_separation),
+            'camera_x': str(profile['camera_x']),
+            'camera_z': str(profile['camera_z']),
+            'camera_pitch': str(profile.get('camera_pitch', 0.0)),
+        }.items(),
     )
 
-    # Node: ZLAC8015D Motor Driver
+    if robot_name == 'zlac8015d':
+        driver_arguments = [LaunchConfiguration('motors_port')]
+    else:
+        driver_arguments = [
+            LaunchConfiguration('motor_left_port'),
+            LaunchConfiguration('motor_right_port'),
+        ]
+
     wheels_driver_node = Node(
-        package='zlac8015d_driver2_cpp',
+        package=driver_package,
         executable='wheels_driver',
         name='wheels_driver',
         output='screen',
-        arguments=[motors_port], # Pasa el puerto como argumento de línea de comandos
+        arguments=driver_arguments,
+        ros_arguments=['--log-level', log_level],
         parameters=[{
             'unlock_driver': True,
             'accel_time_ms': 500,
             'decel_time_ms': 500,
-            'wheels_separation': 0.35
+            'wheels_separation': wheels_separation,
+            'wheel_radius': wheel_radius,
+            'resolution_mode': True,
         }]
     )
 
-    # Node: Odometry (Encoders)
-    odometry_node = Node(
-        package='odometry2',
-        executable='odometry2',
-        name='odometry2_node',
+    twist_mux_node = Node(
+        package='rover_bringup',
+        executable='twist_priority_mux.py',
+        name='twist_priority_mux',
         output='screen',
-        condition=IfCondition(use_imu_wheel_odometry),
+        ros_arguments=['--log-level', log_level],
         parameters=[{
-            'publish_tf': False, # IMPORTANTE: False para dejar que el EKF maneje el TF
-            'wheels_separation': 0.35,
-            'wheel_radius': 0.1
+            'high_topic': '/cmd_vel_safe',
+            'person_topic': '/cmd_vel_person',
+            'low_topic': '/cmd_vel_nav',
+            'output_topic': '/cmd_vel'
         }]
     )
 
-    odometry_wheels_only_node = Node(
-        package='odometry2',
-        executable='odometry2',
-        name='odometry2_node',
+    joy_node = Node(
+        package='joy',
+        executable='joy_node',
+        name='joy_node',
         output='screen',
-        condition=IfCondition(use_wheels_only_odometry),
-        remappings=[('wheel/odom', 'odom')],
         parameters=[{
-            'publish_tf': True,
-            'wheels_separation': 0.35,
-            'wheel_radius': 0.1
-        }]
+            'device_id': 0,
+            'autorepeat_rate': 20.0,
+        }],
+        ros_arguments=['--log-level', log_level],
     )
 
-    # Node: WitMotion IMU (raw)
-    raw_imu_node = Node(
-        package='odometry2',
-        executable='imu',
-        name='imu_raw_node',
+    teleop_joycon_node = Node(
+        package='teleop',
+        executable='teleop_joycon',
+        name='teleop_joycon',
         output='screen',
-        condition=IfCondition(use_imu_wheel_odometry),
-        arguments=[imu_port],
-        remappings=[('imu/data', 'imu/data_raw')],
+        ros_arguments=['--log-level', log_level],
         parameters=[{
-            'baudrate': 115200,
-            'frame_id': 'imu_link'
-        }]
+            'max_lin_vel': max_linear_vel,
+            'max_ang_vel': max_angular_vel,
+        }],
     )
 
-    # Node: IMU filter for WitMotion IMU
-    imu_node = Node(
-        package='imu_filter_madgwick',
-        executable='imu_filter_madgwick_node',
-        name='imu_filter_madgwick_node',
-        output='screen',
-        condition=IfCondition(use_imu_wheel_odometry),
-        parameters=[{
-            'use_mag': False,
-            'world_frame': 'enu',
-            'publish_tf': False
-        }]
-    )
-    
-    # Node: EKF Fusion (Robot Localization)
-    ekf_node = Node(
-        package='robot_localization',
-        executable='ekf_node',
-        name='ekf_filter_node',
-        output='screen',
-        condition=IfCondition(use_imu_wheel_odometry),
-        remappings=[('odometry/filtered', 'odom')],
-        parameters=[ekf_config_path]
-    )
-
-    return LaunchDescription([
-        LogInfo(msg='Iniciando Hardware del Rover con Fusión EKF...'),
-        motors_port_arg,
-        imu_port_arg,
-        use_imu_odometry_arg,
-        use_wheel_odometry_arg,
+    return [
+        LogInfo(msg=f'Starting rover hardware profile: {robot_name}'),
         robot_state_publisher_launch,
+        joy_node,
+        teleop_joycon_node,
+        twist_mux_node,
         wheels_driver_node,
-        # odometry_node,
-        # odometry_wheels_only_node,
-        # raw_imu_node,
-        # imu_node,
-        # ekf_node
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'robot',
+            default_value='zlac706',
+            choices=['zlac8015d', 'zlac706'],
+            description='Robot hardware profile'
+        ),
+        DeclareLaunchArgument(
+            'motor_left_port',
+            default_value='/dev/ttyUSB0',
+            description='Serial port for left ZLAC706 motor driver'
+        ),
+        DeclareLaunchArgument(
+            'motor_right_port',
+            default_value='/dev/ttyUSB1',
+            description='Serial port for right ZLAC706 motor driver'
+        ),
+        DeclareLaunchArgument(
+            'motors_port',
+            default_value='/dev/ttyUSB0',
+            description='Serial port for the ZLAC8015D motor driver'
+        ),
+        DeclareLaunchArgument(
+            'log_level', default_value='warn',
+            description='Log level (debug|info|warn|error)'
+        ),
+        OpaqueFunction(function=_launch_setup),
     ])
