@@ -1,0 +1,157 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-cocoa: var(--cocoa);
+  --color-cocoa-deep: var(--cocoa-deep);
+  --color-mustard: var(--mustard);
+  --color-gold-soft: var(--gold-soft);
+  --color-graphite: var(--graphite);
+  --color-steel: var(--steel);
+  --color-ivory: var(--ivory);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --font-display: "Oswald", "Bebas Neue", system-ui, sans-serif;
+  --font-sans: "Barlow", "Inter", system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /* Brand palette */
+  --cocoa: oklch(0.25 0.04 55);            /* #3B2416 chocolate */
+  --cocoa-deep: oklch(0.18 0.03 55);       /* darker base */
+  --mustard: oklch(0.76 0.14 80);          /* #D4A53A */
+  --gold-soft: oklch(0.83 0.10 85);        /* #E0BE63 */
+  --graphite: oklch(0.38 0.005 60);        /* #4E4E4E */
+  --steel: oklch(0.52 0.005 60);           /* #707070 */
+  --ivory: oklch(0.96 0.012 85);           /* #F5F2EB */
+  --success: oklch(0.72 0.16 145);
+  --warning: oklch(0.78 0.16 60);
+
+  /* Semantic mapping → dark dashboard */
+  --background: var(--cocoa-deep);
+  --foreground: var(--ivory);
+  --card: oklch(0.22 0.025 55);
+  --card-foreground: var(--ivory);
+  --popover: oklch(0.22 0.025 55);
+  --popover-foreground: var(--ivory);
+  --primary: var(--mustard);
+  --primary-foreground: oklch(0.18 0.03 55);
+  --secondary: oklch(0.30 0.025 55);
+  --secondary-foreground: var(--ivory);
+  --muted: oklch(0.28 0.02 55);
+  --muted-foreground: oklch(0.72 0.015 70);
+  --accent: var(--gold-soft);
+  --accent-foreground: oklch(0.18 0.03 55);
+  --destructive: oklch(0.62 0.22 25);
+  --destructive-foreground: var(--ivory);
+  --border: oklch(0.32 0.02 55);
+  --input: oklch(0.30 0.02 55);
+  --ring: var(--mustard);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body { background-color: var(--color-background); color: var(--color-foreground); }
+  body { font-family: var(--font-sans); }
+  h1, h2, h3, h4, .font-display { font-family: var(--font-display); letter-spacing: 0.02em; }
+}
+
+/* Decorative backdrop shapes — coherente con la portada */
+.ares-backdrop {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
+}
+.ares-backdrop::before,
+.ares-backdrop::after {
+  content: ""; position: absolute; transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--mustard), color-mix(in oklab, var(--mustard) 60%, transparent));
+  opacity: 0.55;
+}
+.ares-backdrop::before {
+  width: 380px; height: 380px; left: -180px; top: -120px;
+  box-shadow: 80px 80px 0 -40px var(--graphite);
+}
+.ares-backdrop::after {
+  width: 320px; height: 320px; right: -160px; bottom: -160px;
+  background: linear-gradient(135deg, var(--gold-soft), var(--mustard));
+  opacity: 0.45;
+}
+.ares-dots {
+  position: absolute; width: 140px; height: 140px;
+  background-image: radial-gradient(var(--mustard) 1.6px, transparent 1.8px);
+  background-size: 12px 12px; opacity: 0.7; pointer-events: none;
+}
+.ares-diag-line {
+  position: absolute; height: 1px; background: color-mix(in oklab, var(--ivory) 35%, transparent);
+  transform-origin: left center;
+}
+
+.panel {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--card) 96%, transparent), color-mix(in oklab, var(--cocoa) 92%, transparent));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  position: relative; overflow: hidden;
+}
+.panel-accent::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: linear-gradient(180deg, var(--mustard), var(--gold-soft));
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.72rem;
+  letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+}
+.chip-gold  { background: var(--mustard); color: var(--cocoa-deep); }
+.chip-steel { background: var(--graphite); color: var(--ivory); }
+.chip-ivory { background: var(--ivory); color: var(--cocoa-deep); }
+
+.status-dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+.status-dot.on  { background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 25%, transparent); }
+.status-dot.off { background: var(--destructive); box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 25%, transparent); }
+.status-dot.warn { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 25%, transparent); }
+
+@keyframes ares-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.pulse { animation: ares-pulse 1.8s ease-in-out infinite; }
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+.scanline::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 0%, color-mix(in oklab, var(--mustard) 18%, transparent) 50%, transparent 100%);
+  animation: scanline 4s linear infinite; pointer-events: none;
+}
