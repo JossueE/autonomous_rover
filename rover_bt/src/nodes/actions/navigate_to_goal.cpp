@@ -36,13 +36,14 @@ BT::NodeStatus NavigateToGoal::onStart() {
 bool NavigateToGoal::sendGoalForLocation(const std::string& location,
                                          const std::shared_ptr<SharedContext>& ctx) {
   target_location_ = location;
+  // Claim a fresh token for this dispatch; callbacks from any prior goal hold an
+  // older one and will be ignored (see goal_sequence_ in the header).
   const uint64_t sequence = goal_sequence_.fetch_add(1) + 1;
 
   RCLCPP_INFO(ctx->node->get_logger(),
               "NavigateToGoal: Starting Action Client navigation to '%s'",
               target_location_.c_str());
 
-  // Reset state flags
   goal_sent_ = false;
   goal_accepted_.store(false);
   goal_completed_.store(false);
@@ -55,7 +56,6 @@ bool NavigateToGoal::sendGoalForLocation(const std::string& location,
   // here would loop the tiered recovery forever (replan, replan, ...). The flag
   // is reset once per fresh navigate/patrol command in ProcessCommand instead.
 
-  // Find waypoint
   double x = 0.0, y = 0.0, theta = 0.0;
   std::string lanelet_name = "";
   if (ctx->location_registry) {
@@ -84,19 +84,20 @@ bool NavigateToGoal::sendGoalForLocation(const std::string& location,
     return false;
   }
 
-  // Create action client
+  // Created lazily on first navigation and reused for the node's lifetime.
   if (!action_client_) {
     action_client_ = rclcpp_action::create_client<ActionType>(ctx->node, "navigate_to_goal");
   }
 
-  // Wait for Action Server to be available (briefly)
+  // Bounded wait: this runs inside a BT tick and must not block the tree. If the
+  // server is down, report planner_timeout and let the supervisor's recovery
+  // branch react instead of wedging navigation.
   if (!action_client_->wait_for_action_server(std::chrono::milliseconds(500))) {
     RCLCPP_ERROR(ctx->node->get_logger(), "NavigateToGoal: Action server 'navigate_to_goal' not available!");
     config().blackboard->set("nav_status", std::string("planner_timeout"));
     return false;
   }
 
-  // Setup goal message
   auto goal_msg = ActionType::Goal();
   goal_msg.location_name = target_location_;
   goal_msg.lanelet_name = lanelet_name;
@@ -104,8 +105,7 @@ bool NavigateToGoal::sendGoalForLocation(const std::string& location,
   goal_msg.target_pose.header.stamp = ctx->node->now();
   goal_msg.target_pose.pose.position.x = x;
   goal_msg.target_pose.pose.position.y = y;
-  
-  // Convert yaw to quaternion
+
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, theta);
   goal_msg.target_pose.pose.orientation.x = q.x();
@@ -113,9 +113,11 @@ bool NavigateToGoal::sendGoalForLocation(const std::string& location,
   goal_msg.target_pose.pose.orientation.z = q.z();
   goal_msg.target_pose.pose.orientation.w = q.w();
 
-  // Send Options
+  // Each callback below captures `sequence` by value and bails the moment the
+  // token advances (goal preempted/retargeted/halted), so a late reply from a
+  // superseded goal can't flip the flags or blackboard of the current one.
   auto send_goal_options = rclcpp_action::Client<ActionType>::SendGoalOptions();
-  
+
   send_goal_options.goal_response_callback = [this, ctx, sequence](std::shared_ptr<GoalHandle> handle) {
     if (sequence != goal_sequence_.load()) {
       return;
@@ -162,6 +164,9 @@ bool NavigateToGoal::sendGoalForLocation(const std::string& location,
 }
 
 BT::NodeStatus NavigateToGoal::onRunning() {
+  // Hot-retarget: if the location port changes mid-flight, cancel the active
+  // goal and dispatch the new one while staying RUNNING, so the tree sees one
+  // continuous navigation action rather than a failure/restart.
   auto loc_opt = getInput<std::string>("location");
   if (loc_opt && loc_opt.value() != target_location_) {
     std::shared_ptr<SharedContext> ctx;

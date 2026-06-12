@@ -5,9 +5,13 @@
 
 namespace rover_bt {
 
-// SUCCESS while the joystick has been used (deadman held) within the last
-// `timeout_sec` seconds; FAILURE once it goes idle. Drives automatic entry to
-// and exit from TELEOP_JOYCON without any explicit voice command.
+/**
+ * @brief SUCCESS while the joystick has been used (deadman held) within the last
+ *        `timeout_sec` seconds; FAILURE once it goes idle.
+ *
+ * Drives automatic entry to and exit from TELEOP_JOYCON without any explicit
+ * voice command. FAILURE if the joystick has never been used since startup.
+ */
 class CheckJoyActive : public BT::ConditionNode {
 public:
   CheckJoyActive(const std::string& name, const BT::NodeConfig& config);

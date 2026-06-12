@@ -158,7 +158,7 @@ async def _stream_channel(websocket: WebSocket, channel: str, *, interval: float
 
 @app.websocket("/ws/camera")
 async def ws_camera(websocket: WebSocket) -> None:
-    await _stream_channel(websocket, "camera", interval=1.0 / 12.0)
+    await _stream_channel(websocket, "camera", interval=0.2)
 
 
 @app.websocket("/ws/depth")
@@ -203,7 +203,7 @@ async def ws_rtabmap_status(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/rtabmap/rgb")
 async def ws_rtabmap_rgb(websocket: WebSocket) -> None:
-    await _stream_channel(websocket, "camera", interval=1.0 / 12.0)
+    await _stream_channel(websocket, "camera", interval=0.2)
 
 
 @app.websocket("/ws/rtabmap/depth")

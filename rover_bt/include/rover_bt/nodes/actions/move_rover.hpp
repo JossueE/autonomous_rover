@@ -5,6 +5,15 @@
 
 namespace rover_bt {
 
+/**
+ * @brief Open-loop timed velocity move: drives at a fixed linear/angular twist
+ *        for a fixed duration, then stops.
+ *
+ * Stateful so onRunning can re-publish the twist every tick (keeping cmd_vel
+ * fresh for safety watchdogs) and stop cleanly when the duration elapses or the
+ * node is halted. Ports: linear (m/s), angular (rad/s), duration (s). RUNNING
+ * until the duration elapses, then SUCCESS; FAILURE if ports/context are missing.
+ */
 class MoveRover : public BT::StatefulActionNode {
 public:
   MoveRover(const std::string& name, const BT::NodeConfig& config);

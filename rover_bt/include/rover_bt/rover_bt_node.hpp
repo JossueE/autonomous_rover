@@ -36,6 +36,24 @@
 
 namespace rover_bt {
 
+/**
+ * @brief The rover's top-level behaviour-tree node: owns the BT, its shared
+ *        subsystems, and the ROS I/O that feeds and drives them.
+ *
+ * Responsibilities:
+ *   - bridge ROS → BT: sensor/pose/command callbacks stamp liveness timestamps
+ *     and pose into the SharedContext, and enqueue commands into the
+ *     CommandArbitrator, all consumed by the tree on its tick timer;
+ *   - bridge BT → ROS: tick the tree at bt_tick_rate, publish cmd_vel, the
+ *     person-tracker enable (driven from `mode` every tick), and a ~1 Hz
+ *     RoverStatus with per-sensor health;
+ *   - own the subsystems (CommandArbitrator, LocationRegistry, TTSClient) that
+ *     the BT leaf nodes reach through the SharedContext.
+ *
+ * Threading: ROS callbacks and the tick/status timers run on the node's
+ * executor; shared state lives in SharedContext atomics, so the tree never
+ * blocks on I/O.
+ */
 class RoverBTNode : public rclcpp::Node {
 public:
   RoverBTNode();
@@ -55,6 +73,7 @@ private:
   void on_imu(const sensor_msgs::msg::Imu::SharedPtr msg);
   void on_wheel_data(const std_msgs::msg::Float64::SharedPtr msg);
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+  void on_localization_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void on_trajectory(const nav_msgs::msg::Path::SharedPtr msg);
   void on_command(const rover_bt::msg::Command::SharedPtr msg);
   void on_joy(const sensor_msgs::msg::Joy::SharedPtr msg);
@@ -101,6 +120,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_left_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr wheel_right_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr localization_pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<rover_bt::msg::Command>::SharedPtr command_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;

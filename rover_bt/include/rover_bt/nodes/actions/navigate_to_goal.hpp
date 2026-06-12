@@ -11,6 +11,13 @@ namespace rover_bt {
 
 struct SharedContext;
 
+// Drives the "navigate_to_goal" action server toward a named location resolved
+// through the LocationRegistry. Stateful so one tick loop can dispatch the goal
+// (onStart), poll async outcome flags (onRunning), and cancel cleanly on
+// preempt/halt. Concurrency: the action client's result/feedback/response
+// callbacks fire on the executor thread while the tree ticks on another, so all
+// goal state is shared via atomics and stale callbacks are rejected by matching
+// goal_sequence_ (see .cpp).
 class NavigateToGoal : public BT::StatefulActionNode {
 public:
   NavigateToGoal(const std::string& name, const BT::NodeConfig& config);
@@ -35,6 +42,9 @@ private:
   std::atomic<bool> goal_accepted_{false};
   std::atomic<bool> goal_completed_{false};
   std::atomic<bool> goal_failed_{false};
+  // Monotonic token bumped on every dispatch/cancel. Each goal's callbacks
+  // capture the token they were issued under and no-op once it advances, so a
+  // preempted goal can never mutate state belonging to its replacement.
   std::atomic<uint64_t> goal_sequence_{0};
 
   std::string target_location_;

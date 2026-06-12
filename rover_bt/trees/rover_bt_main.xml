@@ -77,8 +77,8 @@
 
         <!-- Critical sensor check: odom loss = e-stop -->
         <Fallback name="CriticalSensorGate">
-          <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"
-                             lost_debounce_sec="1.0"/>
+          <CheckSensorHealth sensor="odom" max_stale_sec="8.0" on_fail="error"
+                             lost_debounce_sec="4.0"/>
           <Fallback name="OdomLostHandler">
             <!-- If the wheels are ALSO dead, WheelPowerGate already e-stopped and
                  announced it; this odom loss is just a symptom of the power cut,
@@ -94,9 +94,15 @@
             <Sequence name="OdomLostEmergency">
               <ZeroTwist/>
               <SetMode mode="EMERGENCY"/>
-              <SetFlag flag="emergency_from_odom" value="true"/>
               <SetFlag flag="emergency_from_wheels" value="false"/>
-              <Speak message="Odometría perdida. Parada de emergencia."/>
+              <!-- Speak only on the first tick of the loss (edge-trigger). -->
+              <Fallback name="AnnounceOdomOnce">
+                <CheckFlag flag="emergency_from_odom"/>
+                <Sequence name="FirstOdomAlert">
+                  <SetFlag flag="emergency_from_odom" value="true"/>
+                  <Speak message="Odometría perdida. Parada de emergencia."/>
+                </Sequence>
+              </Fallback>
             </Sequence>
           </Fallback>
         </Fallback>
@@ -183,22 +189,26 @@
 
         <!-- === EMERGENCY MODE === -->
         <Fallback name="EmergencyMode">
-          <!-- Auto-recover from an odom-loss emergency once RTAB-Map odometry is
-               healthy again (relocalized). Only fires when the emergency was
-               caused by odom loss (emergency_from_odom=true): commanded e-stops
-               and wheel-loss e-stops clear that flag, so they still require a
-               manual 'resume'. CheckSensorHealth(odom) returns SUCCESS only when
-               odometry is no longer lost AND fresh, so this cannot resume while
-               RTAB-Map is still lost. The Safety layer's CriticalSensorGate
-               re-asserts EMERGENCY every tick while odom is lost, so this branch
-               can only win on a tick where odom has genuinely recovered. -->
+          <!-- Auto-recover from an odom-loss emergency once the robot has truly
+               RELOCALIZED on the prior map — not merely once odometry is tracking
+               again. The OdomSelfRecovery routine (in HoldEmergency below) calls
+               /rtabmap/reset_odom to restore odometry, then waits for RTAB-Map's
+               localization node to re-match the map and sets odom_relocalized.
+               Gating on that (instead of CheckSensorHealth odom) means "Operación
+               reanudada" only fires when the robot knows where it is again; in the
+               brief window where odometry tracks but the map pose is still the
+               jumped reset origin, we keep holding. Only fires for odom-caused
+               emergencies (emergency_from_odom=true); commanded / wheel e-stops
+               clear that flag and still require a manual 'resume'. -->
           <Sequence name="AutoResumeFromOdom">
             <CheckFlag flag="emergency_from_odom"/>
-            <CheckSensorHealth sensor="odom" max_stale_sec="3.0" on_fail="error"/>
+            <CheckFlag flag="odom_relocalized"/>
+            <CheckSensorHealth sensor="odom" max_stale_sec="8.0" on_fail="error"/>
             <SetFlag flag="emergency_from_odom" value="false"/>
+            <SetFlag flag="odom_relocalized" value="false"/>
             <ZeroTwist/>
             <SetMode mode="IDLE"/>
-            <Speak message="Odometría recuperada. Operación reanudada."/>
+            <Speak message="Odometría recuperada y robot relocalizado. Operación reanudada."/>
           </Sequence>
           <!-- Auto-recover from a wheel-power-loss emergency once the wheel
                encoders report fresh data again (button released / drivers
@@ -230,6 +240,22 @@
                the twist_priority_mux never falls through to cmd_vel_nav. -->
           <Sequence name="HoldEmergency">
             <ClearCommand name="DiscardInEmergency"/>
+            <!-- Active odometry self-recovery while held in an odom-loss e-stop.
+                 5 s after the loss began, ResetOdom calls /rtabmap/reset_odom
+                 ONCE to force RTAB-Map to re-initialise tracking, and announces
+                 the attempt. If odometry returns, AutoResumeFromOdom (above)
+                 resumes to IDLE with its own confirmation; if it is still lost
+                 5 s after the attempt, ResetOdom announces the failure once and
+                 the e-stop is held — no further automatic attempts until a new
+                 loss episode. Gated on emergency_from_odom so commanded / wheel
+                 e-stops skip it; ResetOdom always returns SUCCESS so the
+                 ZeroTwist below still runs every tick. -->
+            <ForceSuccess>
+              <Sequence name="OdomSelfRecovery">
+                <CheckFlag flag="emergency_from_odom"/>
+                <ResetOdom delay_sec="5.0" verdict_sec="5.0"/>
+              </Sequence>
+            </ForceSuccess>
             <ZeroTwist/>
           </Sequence>
         </Fallback>

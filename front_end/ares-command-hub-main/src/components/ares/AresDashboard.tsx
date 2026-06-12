@@ -5,21 +5,16 @@ import {
   AlertTriangle,
   Cctv,
   CircleDot,
-  Cloud,
   Compass,
   Cpu,
-  Crosshair,
   Database,
   Gauge,
   ImageIcon,
-  Layers,
-  Map as MapIcon,
   MapPin,
   Network,
   Power,
   Radar,
   Radio,
-  Route,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -72,8 +67,6 @@ type RtabmapStatus = {
   tracking_status: string;
   frame_id: string;
   rgb_topic: string;
-  depth_topic: string;
-  pointcloud_topic: string;
   imu_topic: string;
   camera_info_topic: string;
   sources: Record<string, string>;
@@ -101,35 +94,6 @@ type ImageFrame = {
     frame_id?: string;
     stamp?: number | null;
   };
-};
-
-type MapFrame = {
-  width?: number;
-  height?: number;
-  resolution?: number;
-  image?: {
-    data?: string;
-    width?: number;
-    height?: number;
-    error?: string;
-  };
-};
-
-type PathFrame = {
-  count?: number;
-  poses?: Array<{
-    x: number;
-    y: number;
-    z?: number;
-    yaw?: number;
-  }>;
-};
-
-type PointCloudFrame = {
-  frame_id?: string;
-  total_points?: number;
-  sent_points?: number;
-  points?: number[][];
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -161,8 +125,6 @@ const DEFAULT_RTABMAP: RtabmapStatus = {
   tracking_status: "offline",
   frame_id: "map",
   rgb_topic: "/k4a/rgb/image_raw/compressed",
-  depth_topic: "/k4a/depth_to_rgb/image_raw",
-  pointcloud_topic: "/k4a/points2",
   imu_topic: "/k4a/imu_filtered",
   camera_info_topic: "/k4a/rgb/camera_info",
   sources: {},
@@ -170,13 +132,9 @@ const DEFAULT_RTABMAP: RtabmapStatus = {
 
 const PRIMARY_TOPIC_ORDER = [
   "/k4a/rgb/image_raw/compressed",
-  "/k4a/depth_to_rgb/image_raw",
   "/k4a/rgb/camera_info",
   "/rtabmap/odom",
   "/k4a/imu_filtered",
-  "/rtabmap/grid_prob_map",
-  "/sdv_trajectory",
-  "/k4a/points2",
   "/all_available_paths",
   "/scan",
   "/goal_pose",
@@ -210,10 +168,6 @@ function formatAge(seconds: number | null | undefined) {
   if (seconds == null || !Number.isFinite(seconds)) return "sin datos";
   if (seconds < 1) return "<1s";
   return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
-}
-
-function mapImageSource(frame: MapFrame | null | undefined) {
-  return frame?.image?.data;
 }
 
 function cameraResolutionLabel(
@@ -351,50 +305,6 @@ function TopicRow({ topic }: { topic: RosTopic }) {
   );
 }
 
-function MiniImagePanel({
-  title,
-  icon: Icon,
-  packet,
-}: {
-  title: string;
-  icon: ComponentType<{ className?: string }>;
-  packet: WsPacket<ImageFrame>;
-}) {
-  const frame = packet.data;
-  return (
-    <div className="panel p-5">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Icon className="h-5 w-5 text-mustard" />
-          <h3 className="font-display text-xl tracking-wide">{title}</h3>
-        </div>
-        <StatusBadge status={toBadgeStatus(packet.status)} />
-      </div>
-      <div className="aspect-video rounded-md overflow-hidden border border-border bg-cocoa-deep grid place-items-center">
-        {frame?.data ? (
-          <img src={frame.data} alt={title} className="w-full h-full object-cover" />
-        ) : (
-          <div className="text-center text-muted-foreground">
-            <Radio className="h-8 w-8 text-mustard mx-auto mb-2 pulse" />
-            <div className="text-xs uppercase tracking-[0.2em]">Sin frame</div>
-          </div>
-        )}
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-        <InfoStat
-          icon={ImageIcon}
-          label="Resolución"
-          value={frame?.width && frame?.height ? `${frame.width}x${frame.height}` : "--"}
-        />
-        <InfoStat icon={Database} label="Encoding" value={frame?.encoding ?? "--"} />
-      </div>
-      <div className="mt-3 text-xs text-muted-foreground truncate">
-        {packet.topic || "--"} · {packet.stale ? "stale" : formatAge(packet.last_seen_age)}
-      </div>
-    </div>
-  );
-}
-
 function usePolledEndpoint<T>(path: string, fallback: T, intervalMs: number) {
   const [data, setData] = useState<T>(fallback);
   const [online, setOnline] = useState(false);
@@ -523,10 +433,6 @@ export default function AresDashboard() {
     1500,
   );
   const cameraSocket = useWebSocketPacket<ImageFrame>("/ws/camera");
-  const depthSocket = useWebSocketPacket<ImageFrame>("/ws/depth");
-  const mapSocket = useWebSocketPacket<MapFrame>("/ws/map");
-  const pathSocket = useWebSocketPacket<PathFrame>("/ws/path");
-  const pointCloudSocket = useWebSocketPacket<PointCloudFrame>("/ws/pointcloud");
   const [estopArmed, setEstopArmed] = useState(false);
   const [estopBusy, setEstopBusy] = useState(false);
   const [estopError, setEstopError] = useState<string | null>(null);
@@ -535,11 +441,6 @@ export default function AresDashboard() {
   const topics = topicsState.data;
   const rtabmap = rtabmapState.data;
   const cameraFrame = cameraSocket.packet.data;
-  const depthFrame = depthSocket.packet.data;
-  const mapFrame = mapSocket.packet.data;
-  const pathFrame = pathSocket.packet.data;
-  const pointCloudFrame = pointCloudSocket.packet.data;
-  const mapPreview = mapImageSource(mapFrame);
 
   const cameraStatus =
     cameraSocket.connected && !cameraSocket.packet.stale
@@ -901,98 +802,6 @@ export default function AresDashboard() {
               <StatusBadge status={topics.ros_available ? "online" : "offline"} />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <MiniImagePanel title="Depth Preview" icon={Layers} packet={depthSocket.packet} />
-
-              <div className="panel p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <MapIcon className="h-5 w-5 text-mustard" />
-                    <h3 className="font-display text-xl tracking-wide">Mapa / Path</h3>
-                  </div>
-                  <StatusBadge status={toBadgeStatus(mapSocket.packet.status)} />
-                </div>
-                <div className="aspect-video rounded-md overflow-hidden border border-border bg-cocoa-deep grid place-items-center">
-                  {mapPreview ? (
-                    <img
-                      src={mapPreview}
-                      alt="Occupancy grid"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="text-center text-muted-foreground">
-                      <MapIcon className="h-8 w-8 text-mustard mx-auto mb-2" />
-                      <div className="text-xs uppercase tracking-[0.2em]">Sin mapa</div>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-3">
-                  <InfoStat
-                    icon={MapPin}
-                    label="Mapa"
-                    value={
-                      mapFrame?.width && mapFrame?.height
-                        ? `${mapFrame.width}x${mapFrame.height}`
-                        : "--"
-                    }
-                  />
-                  <InfoStat icon={Route} label="Path" value={pathFrame?.count ?? 0} />
-                  <InfoStat icon={Crosshair} label="Res" value={mapFrame?.resolution ?? "--"} />
-                </div>
-                <div className="mt-3 text-xs text-muted-foreground truncate">
-                  {mapSocket.packet.topic || "--"} · {pathSocket.packet.topic || "--"}
-                </div>
-              </div>
-
-              <div className="panel p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Cloud className="h-5 w-5 text-mustard" />
-                    <h3 className="font-display text-xl tracking-wide">Point Cloud</h3>
-                  </div>
-                  <StatusBadge status={toBadgeStatus(pointCloudSocket.packet.status)} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <InfoStat
-                    icon={Cloud}
-                    label="Enviados"
-                    value={pointCloudFrame?.sent_points ?? 0}
-                  />
-                  <InfoStat
-                    icon={Database}
-                    label="Total"
-                    value={pointCloudFrame?.total_points ?? 0}
-                  />
-                  <InfoStat
-                    icon={Crosshair}
-                    label="Frame"
-                    value={pointCloudFrame?.frame_id ?? "--"}
-                  />
-                  <InfoStat
-                    icon={Network}
-                    label="Edad"
-                    value={formatAge(pointCloudSocket.packet.last_seen_age)}
-                  />
-                </div>
-                <div className="mt-4 h-32 rounded-md border border-border bg-cocoa-deep p-3 overflow-hidden">
-                  <div className="text-[0.65rem] uppercase tracking-widest text-muted-foreground mb-2">
-                    Muestra XYZ
-                  </div>
-                  <div className="grid grid-cols-1 gap-1 text-xs text-ivory/90 font-mono">
-                    {(pointCloudFrame?.points ?? []).slice(0, 4).map((point, index) => (
-                      <div key={index} className="truncate">
-                        {point.map((value) => value.toFixed(2)).join(", ")}
-                      </div>
-                    ))}
-                    {(pointCloudFrame?.points ?? []).length === 0 && (
-                      <div className="text-muted-foreground">sin puntos</div>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-muted-foreground truncate">
-                  {pointCloudSocket.packet.topic || rtabmap.pointcloud_topic}
-                </div>
-              </div>
-
               <div className="panel p-5 lg:col-span-2">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -1025,24 +834,14 @@ export default function AresDashboard() {
                 <div className="grid grid-cols-2 gap-3">
                   <InfoStat icon={Cctv} label="RGB" value={rtabmap.sources.rgb ?? "offline"} />
                   <InfoStat
-                    icon={Layers}
-                    label="Depth"
-                    value={rtabmap.sources.depth ?? "offline"}
-                  />
-                  <InfoStat
                     icon={MapPin}
                     label="Odom"
                     value={rtabmap.visual_odometry ? "online" : "offline"}
                   />
-                  <InfoStat
-                    icon={Cloud}
-                    label="Cloud"
-                    value={rtabmap.sources.pointcloud ?? "offline"}
-                  />
+                  <InfoStat icon={Activity} label="IMU" value={rtabmap.sources.imu ?? "offline"} />
                 </div>
                 <div className="mt-4 space-y-2 text-xs text-muted-foreground">
                   <div className="truncate">RGB: {rtabmap.rgb_topic}</div>
-                  <div className="truncate">Depth: {rtabmap.depth_topic}</div>
                   <div className="truncate">IMU: {rtabmap.imu_topic}</div>
                   <div className="truncate">
                     Error: {rtabmapState.error ?? topicsState.error ?? "--"}

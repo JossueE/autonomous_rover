@@ -27,6 +27,7 @@
 #include "rover_bt/nodes/actions/save_location.hpp"
 #include "rover_bt/nodes/actions/process_command.hpp"
 #include "rover_bt/nodes/actions/set_person_profile.hpp"
+#include "rover_bt/nodes/actions/reset_odom.hpp"
 
 #include <behaviortree_cpp/controls/switch_node.h>
 
@@ -47,6 +48,10 @@ void RoverBTNode::init_parameters() {
   this->declare_parameter("odom_topic", "/odom");
   this->declare_parameter("rtabmap_odom_info_topic", "/rtabmap/odom_info_lite");
   this->declare_parameter("amcl_pose_topic", "/amcl_robot_pose");
+  // RTAB-Map publishes localization_pose each time it relocalizes against the
+  // prior map (localization mode). The odom-loss recovery routine watches it to
+  // confirm the robot is genuinely back on the map after a reset_odom nudge.
+  this->declare_parameter("localization_pose_topic", "/rtabmap/localization_pose");
   this->declare_parameter("scan_topic", "/scan");
   this->declare_parameter("pointcloud_topic", "/k4a/points2");
   // IMU is the Azure Kinect DK's onboard IMU (raw device output), not the old
@@ -135,7 +140,8 @@ void RoverBTNode::init_subsystems() {
     tts_ = std::make_unique<TTSClient>(this, this->get_logger(), tts_topic);
   }
 
-  // Create SharedContext
+  // SharedContext is the BT's view of the node: a non-owning shared_ptr back to
+  // this node plus raw pointers to the subsystems the leaf nodes reach through.
   ctx_ = std::make_shared<SharedContext>();
   ctx_->node = std::shared_ptr<rclcpp::Node>(this, [](rclcpp::Node*) {}); // non-owning shared_ptr
   ctx_->arbitrator = arbitrator_.get();
@@ -195,6 +201,11 @@ void RoverBTNode::init_ros_interfaces() {
   std::string amcl_pose_topic = this->get_parameter("amcl_pose_topic").as_string();
   amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     amcl_pose_topic, 10, std::bind(&RoverBTNode::on_amcl_pose, this, std::placeholders::_1));
+
+  std::string localization_pose_topic = this->get_parameter("localization_pose_topic").as_string();
+  localization_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    localization_pose_topic, 10,
+    std::bind(&RoverBTNode::on_localization_pose, this, std::placeholders::_1));
 
   std::string scan_topic = this->get_parameter("scan_topic").as_string();
   lidar_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
@@ -274,8 +285,8 @@ void RoverBTNode::init_behavior_tree() {
   factory_.registerNodeType<SaveLocation>("SaveLocation");
   factory_.registerNodeType<ProcessCommand>("ProcessCommand");
   factory_.registerNodeType<SetPersonProfile>("SetPersonProfile");
+  factory_.registerNodeType<ResetOdom>("ResetOdom");
 
-  // Load XML
   std::string xml_path = this->get_parameter("tree_xml").as_string();
   if (xml_path.empty()) {
     std::string share_dir = ament_index_cpp::get_package_share_directory("rover_bt");
@@ -297,6 +308,7 @@ void RoverBTNode::init_behavior_tree() {
   blackboard->set("patrol_index", -1);
   blackboard->set("patrol_waypoint", std::string(""));
   blackboard->set("recovery_attempted", false);
+  blackboard->set("odom_relocalized", false);
   blackboard->set("active_command_source", std::string(""));
   blackboard->set("goal_distance", -1.0);
 
@@ -309,7 +321,7 @@ void RoverBTNode::init_behavior_tree() {
   monitor_lidar_        = this->get_parameter("monitor_lidar").as_bool();
   monitor_wheels_       = this->get_parameter("monitor_wheels").as_bool();
 
-  // Tick timer (10Hz)
+  // BT tick timer; rate is param-driven (bt_tick_rate, default 10 Hz).
   double tick_rate = this->get_parameter("bt_tick_rate").as_double();
   auto period = std::chrono::duration<double>(1.0 / tick_rate);
   tick_timer_ = this->create_wall_timer(period, std::bind(&RoverBTNode::tick_tree, this));
@@ -320,7 +332,6 @@ void RoverBTNode::init_behavior_tree() {
 }
 
 void RoverBTNode::tick_tree() {
-  // Tick tree exactly once
   tree_.tickExactlyOnce();
 
   // Drive the person-tracker enable from the (single source of truth) mode every
@@ -500,12 +511,13 @@ void RoverBTNode::on_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr 
 void RoverBTNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
   ctx_->last_odom_time.store(to_seconds(msg->header.stamp));
 
-  // Extract pose info
   double x = msg->pose.pose.position.x;
   double y = msg->pose.pose.position.y;
   double yaw = quat_to_yaw(msg->pose.pose.orientation);
 
-  // Update only if pose source is still odom
+  // Only let raw odom drive the pose while it's the active source; once AMCL/map
+  // localization takes over (pose_source="map") its poses win and odom is
+  // ignored for pose (we still always update linear velocity below).
   std::lock_guard<std::mutex> lock(ctx_->pose_source_mutex);
   if (ctx_->pose_source == "odom") {
     ctx_->robot_x.store(x);
@@ -550,6 +562,16 @@ void RoverBTNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamp
   ctx_->robot_x.store(x);
   ctx_->robot_y.store(y);
   ctx_->robot_theta.store(yaw);
+}
+
+void RoverBTNode::on_localization_pose(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr /*msg*/) {
+  // A message here = RTAB-Map successfully matched the robot to the prior map
+  // (a relocalization). We only need the timing, not the pose: stamp node-clock
+  // receive time so the odom-recovery routine can tell a relocalization that
+  // happened AFTER a loss/reset from a stale one. RTAB-Map stalls while
+  // odometry is lost, so this naturally stops updating during the loss.
+  ctx_->last_localization_time.store(this->get_clock()->now().seconds());
 }
 
 void RoverBTNode::on_trajectory(const nav_msgs::msg::Path::SharedPtr msg) {

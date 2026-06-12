@@ -43,7 +43,7 @@ rover_bt_node:
     monitor_lidar: false                        # real HW has no lidar; sim launch sets this true
     lidar_stale_timeout: 5.0
     camera_stale_timeout: 5.0
-    odom_stale_timeout: 3.0                     # critical — triggers e-stop
+    odom_stale_timeout: 8.0                     # critical — triggers e-stop
     imu_stale_timeout: 5.0
     motor_stale_timeout: 5.0                    # wheel-encoder liveness (warn watchdog; critical gate uses 1.5s in the tree)
 
@@ -83,7 +83,7 @@ voice_command_node:
     stt_model_name: "base"               # must match a Whisper model in config/models.yml
 
     wake_word: "comando"
-    wake_variants: ["command"]  # List of ASR variants to recognize as wake command. Repeats increase recognition robustness.
+    wake_variants: ["comando"]  # List of ASR variants to recognize as wake command. Repeats increase recognition robustness.
     wake_timeout_sec: 10.0               # seconds to wait for command before sleeping
 
     # ── Topics / files ──

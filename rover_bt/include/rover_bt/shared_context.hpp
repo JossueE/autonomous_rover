@@ -46,6 +46,14 @@ struct SharedContext {
   // or 0.0 while odom is healthy. Lets the watchdog debounce brief losses: the
   // e-stop only fires after odom has been continuously lost past a threshold.
   std::atomic<double> rtabmap_odom_lost_since{0.0};
+  // Node-clock time (s) the rtabmap localization node last published a
+  // /rtabmap/localization_pose — i.e. the last time it successfully matched the
+  // robot against the prior map (a relocalization event). RTAB-Map stalls while
+  // visual/ICP odometry is lost, so this stops updating during an odom loss and
+  // ticks again only once odometry recovers AND the place is recognized. The
+  // odom-loss recovery routine uses a value newer than the loss to confirm the
+  // robot is genuinely localized again (not merely producing fresh odometry).
+  std::atomic<double> last_localization_time{0.0};
   std::atomic<double> last_imu_time{0.0};
   // last_motor_time = last time EITHER wheel encoder topic was received.
   // Both robots (zlac706 / zlac8015d) publish wheel/left_data + wheel/right_data,

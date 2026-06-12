@@ -53,14 +53,14 @@ BT::NodeStatus MoveRover::onRunning() {
 
   double now = ctx->node->get_clock()->now().seconds();
   if (now - start_time_ >= duration_) {
-    // Done! Stop the rover
-    geometry_msgs::msg::Twist twist;
+    geometry_msgs::msg::Twist twist;  // zero twist: stop at end of duration
     ctx->cmd_vel_pub->publish(twist);
     RCLCPP_INFO(ctx->node->get_logger(), "MoveRover: finished open-loop move");
     return BT::NodeStatus::SUCCESS;
   }
 
-  // Keep publishing twist for safety/continuity
+  // Re-publish the twist every tick so cmd_vel doesn't go stale and trip the
+  // downstream safety watchdog mid-move.
   geometry_msgs::msg::Twist twist;
   twist.linear.x = linear_;
   twist.angular.z = angular_;
