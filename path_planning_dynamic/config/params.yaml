@@ -7,9 +7,9 @@ path_planning_node:
     planner.segment_steps: 4          # Number of rollout samples per motion primitive.
     planner.sample_distance: 0.05     # Distance advanced per rollout sample for forward primitives (m).
     planner.square_size_m: 1.5        # Side length of the local planning window used for local occupancy reconstruction (m).
-    planner.safe_clear: 0.2           # Minimum clearance margin to obstacles used by the planner cost/rejection logic (m).
+    planner.safe_clear: 0.4           # Minimum clearance margin to obstacles used by the planner cost/rejection logic (m).
     planner.goal_tolerance: 0.4       # Arrival radius for the navigate action's goal-reached check (m). Separate from safe_clear.
-    planner.obstacle_inflation_radius_cells: 2 # [LEGACY, fallback only] Extra obstacle inflation radius in local-grid cells. Used only when planner.obstacle_inflation_radius_m <= 0.
+    planner.obstacle_inflation_radius_cells: 3 # [LEGACY, fallback only] Extra obstacle inflation radius in local-grid cells. Used only when planner.obstacle_inflation_radius_m <= 0.
     planner.obstacle_inflation_radius_m: 0.0 # Disabled to preserve old cell-based obstacle inflation behavior.
     planner.forward_distance: 1.5     # Distance (m) the local chunk origin is shifted ahead of the robot along its heading.
     planner.chunk_radius_cells: 200    # Half-side of the local chunk extracted from the global map, in cells of the global map. Total chunk = (2*radius) x (2*radius) cells.
